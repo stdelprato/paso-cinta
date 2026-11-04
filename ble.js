@@ -13,6 +13,13 @@ class Treadmill extends EventTarget {
     this.want = false;       // queremos seguir conectados (reconexión automática)
     this.pending = null;
     this.retry = null;
+    this.logs = [];          // diagnóstico: últimos comandos y respuestas
+  }
+
+  log(msg) {
+    const t = new Date().toLocaleTimeString("es-AR", { hour12: false });
+    this.logs.push(`${t}  ${msg}`);
+    if (this.logs.length > 80) this.logs.shift();
   }
 
   get supported() { return !!navigator.bluetooth; }
@@ -80,6 +87,7 @@ class Treadmill extends EventTarget {
     this.control = false;
     this.speed = 0;
     this.lastAt = Date.now();
+    this.log(`Conectada a ${this.name}${this.cp ? "" : " (sin control de comandos)"}`);
     this.set("on");
   }
 
@@ -88,6 +96,7 @@ class Treadmill extends EventTarget {
     if (!r || r.speed === undefined) return;
     this.speed = Math.round(r.speed * 10) / 10;
     if (r.dist !== undefined) this.dist = r.dist;
+    if (!this._lastLogged || Date.now() - this._lastLogged > 15000) { this._lastLogged = Date.now(); this.log(`Datos: ${this.speed} km/h · ${this.dist} m`); }
     this.lastAt = Date.now();
     this.dispatchEvent(new CustomEvent("data", { detail: { speed: this.speed, dist: this.dist } }));
   }
@@ -97,7 +106,11 @@ class Treadmill extends EventTarget {
     if (dv.byteLength < 3 || dv.getUint8(0) !== 0x80 || !this.pending) return;
     if (dv.getUint8(1) !== this.pending.op) return;
     const p = this.pending; this.pending = null;
-    dv.getUint8(2) === 1 ? p.ok() : p.fail(new Error("La cinta rechazó el comando"));
+    const code = dv.getUint8(2);
+    const names = { 1: "OK", 2: "no soportado", 3: "valor inválido", 4: "falló", 5: "sin control" };
+    this.log(`← respuesta ${hex(dv)} (${names[code] || code})`);
+    if (code === 1) p.ok();
+    else { const e = new Error("La cinta rechazó el comando"); e.code = code; p.fail(e); }
   }
 
   command(bytes) {
@@ -110,16 +123,48 @@ class Treadmill extends EventTarget {
         fail: e => { clearTimeout(timer); fail(e); }
       };
       const data = new Uint8Array(bytes);
+      this.log(`→ comando ${hex(data)}`);
       const w = this.cp.writeValueWithResponse ? this.cp.writeValueWithResponse(data) : this.cp.writeValue(data);
-      w.catch(e => { clearTimeout(timer); this.pending = null; fail(e); });
+      w.catch(e => { clearTimeout(timer); this.pending = null; this.log(`✗ error al escribir: ${e.message}`); fail(e); });
     });
   }
 
   async ensureControl() { if (!this.control) { await this.command(CintaCore.CMD.requestControl()); this.control = true; } }
-  async start() { await this.ensureControl(); await this.command(CintaCore.CMD.start()); }
-  async pause() { await this.ensureControl(); await this.command(CintaCore.CMD.pause()); }
-  async stop() { await this.ensureControl(); await this.command(CintaCore.CMD.stop()); }
-  async setSpeed(kmh) { await this.ensureControl(); await this.command(CintaCore.CMD.speed(kmh)); }
+
+  // Manda un comando; si la cinta dice "sin control" (o no responde), pide control de nuevo y reintenta una vez.
+  async send(bytes) {
+    await this.ensureControl();
+    try { await this.command(bytes); }
+    catch (e) {
+      this.control = false;
+      await this.ensureControl();
+      await this.command(bytes);
+    }
+  }
+  start() { return this.send(CintaCore.CMD.start()); }
+  pause() { return this.send(CintaCore.CMD.pause()); }
+  setSpeed(kmh) { return this.send(CintaCore.CMD.speed(kmh)); }
+
+  // Frenar: stop. La cinta desacelera despacio, así que se considera "frenando" si la velocidad baja.
+  // Si a los 5 s no bajó nada, prueba pausa y después velocidad 0.
+  async stop() {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const v0 = this.liveSpeed();
+    const braking = () => this.liveSpeed() === 0 || this.liveSpeed() < v0 - 0.3;
+    try { await this.send(CintaCore.CMD.stop()); } catch (e) {}
+    if (v0 === 0) return true;
+    await wait(5000);
+    if (braking()) return true;
+    this.log("No frena: pruebo pausa");
+    try { await this.send(CintaCore.CMD.pause()); } catch (e) {}
+    await wait(5000);
+    if (braking()) return true;
+    this.log("No frena: pruebo velocidad 0");
+    try { await this.send(CintaCore.CMD.speed(0)); } catch (e) {}
+    await wait(5000);
+    if (!braking()) { this.log("✗ La cinta no frenó con ningún comando"); throw new Error("no frenó"); }
+    return true;
+  }
 
   drop() {
     this.cp = null; this.control = false; this.speed = 0;
@@ -137,4 +182,9 @@ class Treadmill extends EventTarget {
   }
 
   set(s) { if (this.state !== s) { this.state = s; this.dispatchEvent(new Event("state")); } }
+}
+
+function hex(data) {
+  const a = data instanceof DataView ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : data;
+  return [...a].map(x => x.toString(16).padStart(2, "0").toUpperCase()).join("-");
 }

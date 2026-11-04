@@ -14,7 +14,7 @@ const S = {
   profiles: store.get("profiles", []),
   activeId: store.get("active", null),
   sessions: store.get("sessions", []),
-  settings: Object.assign({ deg: 3.58, lastMode: "flat" }, store.get("settings", {})),
+  settings: Object.assign({ pct: 6.3, lastMode: "flat", burn: "h" }, store.get("settings", {})),
   live: store.get("live", null)
 };
 const save = {
@@ -37,7 +37,8 @@ const kcalWord = p => isNet(p) ? "kcal netas" : "kcal";
 const firstName = p => ((p && p.name) || "").trim().split(/\s+/)[0] || "";
 const initial = p => (((p && p.name) || "?").trim()[0] || "?").toUpperCase();
 const avatar = (p, cls = "") => `<span class="avatar ${cls}" style="--c:${p.color}">${esc(initial(p))}</span>`;
-const gradeOf = mode => mode === "inc" ? C.gradeFromDeg(S.settings.deg) : 0;
+const incGrade = () => (S.settings.pct || 6.3) / 100;
+const gradeOf = mode => mode === "inc" ? incGrade() : 0;
 const weekFrom = () => C.weekStart(new Date()).getTime();
 const weekKcal = p => sessionsOf(p).filter(s => s.start >= weekFrom()).reduce((a, s) => a + kcalOf(s, p), 0);
 const fmtDay = (ts, o) => new Date(ts).toLocaleDateString("es-AR", o);
@@ -96,6 +97,13 @@ function renderHome() {
     </header>
 
     ${deviceCard()}
+
+    ${daysSinceWeigh(p) >= 7 && Date.now() > (p.weightSnooze || 0) ? `
+    <div class="card remind">
+      <span class="bub kcal">${icon("scale", 20)}</span>
+      <div class="grow"><b>¿Cuánto pesás hoy?</b><span>${daysSinceWeigh(p) >= 99 ? "Cargá tu peso" : `Hace ${daysSinceWeigh(p)} días que no lo cargás`} para que las calorías sean exactas.</span></div>
+      <div class="remind-act"><button class="btn btn-primary sm" data-act="weigh">Cargar</button><button class="btn btn-ghost sm" data-act="weigh-later">Después</button></div>
+    </div>` : ""}
 
     <div class="card week">
       <div class="card-h"><span class="card-t">Esta semana</span><span class="card-s">Meta ${int(goal)} ${kcalWord(p)}</span></div>
@@ -319,7 +327,8 @@ function renderProfile() {
 
     <div class="group-t">Cinta</div>
     <div class="group">
-      ${row("mountain", "Inclinada", `${dec2(S.settings.deg)}° · ${dec1(C.gradeFromDeg(S.settings.deg) * 100)}%`, "deg")}
+      ${row("mountain", "Inclinada", `${dec1(S.settings.pct)} %`, "pct")}
+      <button class="row" data-act="diag"><span class="ri">${icon("bolt", 18)}</span><span class="rl">Diagnóstico</span>${icon("chevR", 18, "chev")}</button>
       <button class="row" data-act="device"><span class="ri">${icon("bt", 18)}</span><span class="rl">Conexión</span><span class="rv">${ble.connected ? "Conectada" : "Desconectada"}</span>${icon("chevR", 18, "chev")}</button>
     </div>
 
@@ -330,7 +339,8 @@ function renderProfile() {
       <button class="row" data-act="import"><span class="ri">${icon("upload", 18)}</span><span class="rl">Importar copia</span>${icon("chevR", 18, "chev")}</button>
       <button class="row danger" data-act="delete-profile"><span class="ri">${icon("trash", 18)}</span><span class="rl">Eliminar perfil</span></button>
     </div>
-    <p class="foot">Calorías estimadas con la fórmula ACSM para caminata,<br>según tu peso, la velocidad y la inclinación.</p>`;
+    <p class="foot">Calorías estimadas con la fórmula ACSM para caminata,<br>según tu peso, la velocidad y la inclinación.</p>
+    <div class="ver">Paso ${VERSION} · <button data-act="update">Buscar actualizaciones</button></div>`;
 }
 function row(ic, label, val, field) {
   return `<button class="row" data-act="field" data-f="${field}"><span class="ri">${icon(ic, 18)}</span><span class="rl">${label}</span><span class="rv">${val}</span>${icon("chevR", 18, "chev")}</button>`;
@@ -346,10 +356,10 @@ const PICK = {
     onDone: ([a, b]) => done({ weight: a + b / 10 })
   }),
   goal: (v, done) => UI.pick({ title: "Meta semanal", columns: [{ values: UI.range(500, 10000, 100), value: Math.round((v.goal || 2000) / 100) * 100, format: int, width: "130px" }], unit: "kcal", onDone: ([g]) => done({ goal: g }) }),
-  deg: (_, done) => UI.pick({
-    title: "Inclinación de las patitas", sep: ",", unit: "°",
-    columns: [{ values: UI.range(0, 9), value: Math.floor(S.settings.deg), width: "70px" }, { values: UI.range(0, 99), value: Math.round((S.settings.deg % 1) * 100) % 100, format: v => String(v).padStart(2, "0"), width: "80px" }],
-    onDone: ([a, b]) => done({ deg: a + b / 100 })
+  pct: (_, done) => UI.pick({
+    title: "Inclinación (INCLINADA)", sep: ",", unit: "%",
+    columns: [{ values: UI.range(0, 15), value: Math.floor(S.settings.pct), width: "70px" }, { values: UI.range(0, 9), value: Math.round((S.settings.pct % 1) * 10) % 10, width: "64px" }],
+    onDone: ([x, y]) => done({ pct: x + y / 10 })
   })
 };
 
@@ -357,17 +367,26 @@ function editField(f) {
   const p = me();
   if (f === "name") return nameSheet(p.name, name => { p.name = name; save.profiles(); render(); });
   PICK[f](p, ch => {
-    if (ch.deg !== undefined) { S.settings.deg = ch.deg; save.settings(); }
+    if (ch.pct !== undefined) { S.settings.pct = ch.pct; save.settings(); }
     else {
-      if (ch.weight !== undefined && ch.weight !== p.weight) {
-        p.weights = p.weights || [];
-        const last = p.weights[p.weights.length - 1];
-        if (last && C.dayKey(last.t) === C.dayKey(Date.now())) last.kg = ch.weight; else p.weights.push({ t: Date.now(), kg: ch.weight });
-      }
+      if (ch.weight !== undefined) logWeight(p, ch.weight);
       Object.assign(p, ch); save.profiles();
     }
     render();
   });
+}
+
+// Registra una pesada (aunque sea el mismo peso: cuenta para el recordatorio semanal).
+function logWeight(p, kg) {
+  p.weights = p.weights || [];
+  const last = p.weights[p.weights.length - 1];
+  if (last && C.dayKey(last.t) === C.dayKey(Date.now())) { last.kg = kg; last.t = Date.now(); }
+  else p.weights.push({ t: Date.now(), kg });
+  p.weightSnooze = 0;
+}
+function daysSinceWeigh(p) {
+  const w = p.weights || [];
+  return w.length ? Math.floor((Date.now() - w[w.length - 1].t) / 864e5) : 99;
 }
 
 function nameSheet(cur, done) {
@@ -551,10 +570,11 @@ function buildLive() {
         <div class="ring-box live-ring">${UI.ring({ pct: 0, size: 150, stroke: 13 })}
           <div class="ring-in">${icon("flame", 18)}<b class="num" id="L-kcal">0</b><span id="L-kw">kcal</span></div>
         </div>
-        <div class="burn">
+        <div class="burn" id="L-burn">
           <span class="flame">${icon("flame", 22)}</span>
           <div class="lbl">Ritmo de quema</div>
-          <div class="val"><b class="num" id="L-rate">0</b><span>kcal/h</span></div>
+          <div class="val"><b class="num" id="L-rate">0</b><span id="L-ru">kcal/h</span></div>
+          <div class="units" id="L-units">${[["h", "/h"], ["min", "/min"], ["km", "/km"]].map(([v, l]) => `<button data-u="${v}">${l}</button>`).join("")}</div>
           <div class="meter"><div class="meter-fill" id="L-mfill"></div><div class="meter-knob" id="L-mknob"></div></div>
           <div class="tag" id="L-int">—</div>
         </div>
@@ -589,6 +609,11 @@ function buildLive() {
     save.live(); save.settings(); haptic(12);
     UI.setSeg($('[data-seg="lmode"]'), b.dataset.v);
     updateLive();
+  };
+  $("#L-units").onclick = e => {
+    const b = e.target.closest("button[data-u]");
+    if (!b) return;
+    S.settings.burn = b.dataset.u; save.settings(); haptic(6); updateLive();
   };
   $("#L-ctl").onclick = e => {
     const b = e.target.closest("button[data-d]");
@@ -636,7 +661,7 @@ function updateLive() {
   const kc = isNet(p) ? t.net : t.gross;
   const rateK = C.kcalPerMin(spd, gradeOf(L.mode), L.kg);
   const rate = (isNet(p) ? rateK.net : rateK.gross) * 60;
-  const maxRate = (isNet(p) ? C.kcalPerMin(6, C.gradeFromDeg(S.settings.deg), L.kg).net : C.kcalPerMin(6, C.gradeFromDeg(S.settings.deg), L.kg).gross) * 60;
+  const maxRate = (isNet(p) ? C.kcalPerMin(6, incGrade(), L.kg).net : C.kcalPerMin(6, incGrade(), L.kg).gross) * 60;
   const pct = Math.min(1, rate / maxRate);
 
   const live = $("#live");
@@ -647,10 +672,14 @@ function updateLive() {
   $("#L-time").textContent = C.fmtTime(t.sec);
   $("#L-kcal").textContent = int(kc);
   $("#L-kw").textContent = isNet(p) ? "kcal netas" : "kcal";
-  $("#L-km").textContent = dec2(t.km);
+  $("#L-km").textContent = dec2(liveKm(L, t));
   $("#L-spd").textContent = dec1(spd);
   $("#L-pace").textContent = C.fmtPace(spd);
-  $("#L-rate").textContent = int(moving ? rate : 0);
+  const u = S.settings.burn || "h";
+  const shown = !moving ? 0 : u === "min" ? rate / 60 : u === "km" ? rate / spd : rate;
+  $("#L-rate").textContent = u === "min" ? dec1(shown) : int(shown);
+  $("#L-ru").textContent = u === "min" ? "kcal/min" : u === "km" ? "kcal/km" : "kcal/h";
+  $$("#L-units button").forEach(b => b.classList.toggle("on", b.dataset.u === u));
   $("#L-mfill").style.width = (moving ? pct * 100 : 0) + "%";
   $("#L-mknob").style.left = (moving ? pct * 100 : 0) + "%";
   $("#L-int").textContent = !moving ? "En espera" : pct < .35 ? "Suave" : pct < .65 ? "Moderado" : pct < .85 ? "Intenso" : "Máximo";
@@ -673,6 +702,10 @@ function updateLive() {
   $("#L-pause").innerHTML = icon(L.state === "running" ? "pause" : "play", 28);
   $("#L-plbl").textContent = L.state === "running" ? "Pausa" : "Seguir";
 }
+
+// Distancia: se usa el contador de la propia cinta (así coincide con su pantalla).
+// Si la cinta no la manda, se calcula con velocidad × tiempo.
+const liveKm = (L, t) => L.prevDist != null ? (L.cKm || 0) : t.km;
 
 function controlFailed() {
   if (controlWarned) return;
@@ -742,22 +775,28 @@ function countdown() {
   });
 }
 
+function stopBelt() {
+  if (!ble.connected) return;
+  ble.stop().catch(() => UI.toast("La cinta no frenó desde la app. Frenala con el control."));
+}
 async function finishLive() {
   const L = S.live; if (!L) return;
-  ble.stop().catch(() => {});
   const t = C.totals(L.segs);
+  t.km = liveKm(L, t);
+  autoArmed = false;                      // la cinta sigue frenando: no arrancar otra caminata sola
+  stopBelt();
   S.live = null; save.live();
   releaseAwake();
   hideLive();
   if (t.sec < 20) { UI.toast("Fue muy corta, no se guardó"); return; }
-  const s = { id: L.id, profileId: L.profileId, start: L.start, end: Date.now(), source: "ble", kg: L.kg, deg: S.settings.deg, segs: L.segs, samples: L.samples, ...t };
+  const s = { id: L.id, profileId: L.profileId, start: L.start, end: Date.now(), source: "ble", kg: L.kg, pct: S.settings.pct, segs: L.segs, samples: L.samples, ...t };
   S.sessions.unshift(s); save.sessions();
   render();
   setTimeout(() => openSession(s, true), 350);
 }
 async function discardLive() {
   if (!(await UI.confirm({ title: "¿Descartar la caminata?", text: "No se va a guardar nada.", ok: "Descartar", danger: true }))) return;
-  ble.stop().catch(() => {});
+  autoArmed = false; stopBelt();
   S.live = null; save.live(); releaseAwake(); hideLive();
 }
 
@@ -780,8 +819,24 @@ function tick() {
 }
 
 // Si la cinta arranca con el control remoto, la sesión empieza sola.
+// Solo si antes estuvo quieta 4 s (después de terminar, la cinta tarda en frenar).
+let autoArmed = true, zeroSince = 0;
 ble.addEventListener("data", e => {
-  if (!S.live && e.detail.speed > 0 && me()) {
+  const { speed, dist } = e.detail;
+  if (speed > 0) zeroSince = 0;
+  else { zeroSince = zeroSince || Date.now(); if (Date.now() - zeroSince > 4000) autoArmed = true; }
+
+  const L = S.live;
+  if (L && dist != null) {
+    if (L.prevDist != null) {
+      let d = dist - L.prevDist;
+      if (d < 0) d = dist;                          // la cinta reinició su contador
+      if (L.state !== "paused" && d > 0 && d < 300) L.cKm = (L.cKm || 0) + d / 1000;
+    }
+    L.prevDist = dist;
+  }
+
+  if (!S.live && speed > 0 && autoArmed && me()) {
     createLive(me(), "running");
     showLive();
     UI.toast("Caminata iniciada desde la cinta");
@@ -857,6 +912,10 @@ document.addEventListener("click", e => {
     "export": exportData,
     "import": importData,
     "delete-profile": deleteProfile,
+    "update": () => checkUpdate(true),
+    "diag": diagSheet,
+    "weigh": () => PICK.weight(me(), ch => { logWeight(me(), ch.weight); me().weight = ch.weight; save.profiles(); render(); UI.toast("Peso guardado"); }),
+    "weigh-later": () => { me().weightSnooze = Date.now() + 864e5; save.profiles(); render(); },
     "live-min": hideLive,
     "live-discard": discardLive
   };
@@ -876,12 +935,39 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.1";
+const VERSION = "1.2";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
   if (prev && prev !== VERSION) setTimeout(() => UI.toast(`App actualizada a la versión ${VERSION}`), 900);
 })();
+
+async function checkUpdate(manual) {
+  try {
+    if (manual) UI.toast("Buscando actualizaciones…");
+    const r = await fetch("version.json?t=" + Date.now(), { cache: "no-store" });
+    const { version } = await r.json();
+    if (version && version !== VERSION) {
+      if (!manual && sessionStorage.getItem("paso.reloaded") === version) return; // evita recargar en bucle
+      sessionStorage.setItem("paso.reloaded", version);
+      if (S.live) { if (manual) UI.toast("Terminá la caminata para actualizar"); return; }
+      UI.toast(`Actualizando a la versión ${version}…`);
+      const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+      if (reg) await reg.update().catch(() => {});
+      setTimeout(() => location.reload(), 900);
+    } else if (manual) UI.toast("Ya tenés la última versión");
+  } catch (e) { if (manual) UI.toast("Sin conexión"); }
+}
+
+function diagSheet() {
+  const logs = ble.logs.length ? ble.logs.slice().reverse().join("\n") : "Todavía no hay registros. Conectate a la cinta y usá los botones.";
+  const s = UI.sheet(`<div class="sheet-body"><h3 class="sheet-title">Diagnóstico de la cinta</h3>
+    <pre class="diag">${esc(logs)}</pre>
+    <button class="btn btn-primary" data-copy>Copiar</button><button class="btn btn-ghost" data-close>Cerrar</button></div>`);
+  s.el.querySelector("[data-copy]").onclick = async () => {
+    try { await navigator.clipboard.writeText(ble.logs.join("\n")); UI.toast("Copiado"); } catch (e) { UI.toast("No se pudo copiar"); }
+  };
+}
 
 // ================= arranque =================
 buildLive();
@@ -891,6 +977,7 @@ if (S.live) {
   showLive();
 }
 setInterval(tick, 1000);
+setTimeout(() => checkUpdate(false), 1500);
 // Si Chrome ya conoce la cinta, conectarse en silencio
 ble.hasKnown().then(k => { if (k) ble.reconnectKnown(); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

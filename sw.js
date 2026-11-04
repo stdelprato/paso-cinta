@@ -1,7 +1,7 @@
 // Al abrir la app: si hay internet baja la última versión (actualización automática);
 // si no hay o tarda más de 3 s, abre la copia guardada en el celu.
-const CACHE = "paso-v3";
-const FILES = ["./", "index.html", "styles.css", "core.js", "ble.js", "ui.js", "app.js", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"];
+const CACHE = "paso-v4";
+const FILES = ["./", "index.html", "styles.css", "core.js", "ble.js", "ui.js", "app.js", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "version.json"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener("activate", e => e.waitUntil(
   caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())
