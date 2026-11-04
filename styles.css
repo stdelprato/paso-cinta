@@ -25,7 +25,8 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; background: var(--bg); color: var(--t1); }
+/* Como app nativa: la página no se mueve; cada pantalla tiene su propio scroll, sin rebote ni "tirar para recargar". */
+html, body { margin: 0; background: var(--bg); color: var(--t1); height: 100%; overflow: hidden; overscroll-behavior: none; touch-action: manipulation; }
 body {
   font-family: "Inter", system-ui, -apple-system, sans-serif;
   font-feature-settings: "cv11", "ss01", "ss03";
@@ -49,11 +50,16 @@ small { font-size: .5em; font-weight: 600; color: var(--t2); margin-left: .15em;
 
 /* ---------- pantallas ---------- */
 .screen {
-  display: none; position: relative; z-index: 1;
-  max-width: 520px; margin: 0 auto;
+  display: none; position: fixed; inset: 0; z-index: 1;
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  padding-left: max(20px, calc((100% - 480px) / 2)) !important;
+  padding-right: max(20px, calc((100% - 480px) / 2)) !important;
   padding: calc(var(--st) + 22px) 20px calc(var(--tab) + var(--sb) + 28px);
 }
-.screen.on { display: block; animation: rise .45s var(--ease); }
+.screen::-webkit-scrollbar { display: none; }
+.screen.on { display: block; }
+.screen.on > * { animation: rise .45s var(--ease) backwards; }
 #s-home.on { padding-bottom: calc(var(--tab) + var(--sb) + 110px); }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 
@@ -195,7 +201,7 @@ body.onboarding .cta, body.onboarding .tabbar { display: none; }
   position: fixed; inset: 0; z-index: 50; background: var(--bg);
   display: flex; flex-direction: column;
   padding: calc(var(--st) + 14px) 20px calc(var(--sb) + 20px);
-  overflow-y: auto;
+  overflow-y: auto; overscroll-behavior: none;
   transform: translateY(100%); transition: transform .5s var(--ease);
 }
 .live::before { content: ""; position: fixed; inset: 0; pointer-events: none; background: radial-gradient(500px 360px at 50% 30%, rgba(255, 90, 80, .1), transparent 70%); opacity: 0; transition: opacity 1s; }

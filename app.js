@@ -59,7 +59,7 @@ function renderTabs() {
   $("#tabs").innerHTML = [["home", "home", "Inicio"], ["progress", "chart", "Progreso"], ["profile", "user", "Perfil"]]
     .map(([t, ic, l]) => `<button data-tab="${t}" class="${view.tab === t ? "on" : ""}">${icon(ic, 23)}<span>${l}</span></button>`).join("");
 }
-function go(tab) { if (view.tab === tab) return; view.tab = tab; haptic(6); window.scrollTo(0, 0); render(); }
+function go(tab) { if (view.tab === tab) return; view.tab = tab; haptic(6); render(); const sc = $(".screen.on"); if (sc) sc.scrollTop = 0; }
 
 // ================= bienvenida =================
 function renderWelcome() {
@@ -874,6 +874,14 @@ document.addEventListener("click", e => {
   const bar = e.target.closest(".screen .bar");
   if (bar) { view.sel = +bar.dataset.i; haptic(4); $$(".screen .bar").forEach(b => b.classList.toggle("on", b === bar)); }
 });
+
+// ================= versión =================
+const VERSION = "1.1";
+(() => {
+  const prev = store.get("version", null);
+  store.set("version", VERSION);
+  if (prev && prev !== VERSION) setTimeout(() => UI.toast(`App actualizada a la versión ${VERSION}`), 900);
+})();
 
 // ================= arranque =================
 buildLive();
