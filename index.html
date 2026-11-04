@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#07080b">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Paso</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <section class="screen" id="s-welcome"></section>
+  <section class="screen" id="s-home"></section>
+  <section class="screen" id="s-progress"></section>
+  <section class="screen" id="s-profile"></section>
+
+  <button class="cta" id="cta" data-act="start" hidden></button>
+
+  <nav class="tabbar"><div class="tabbar-in" id="tabs"></div></nav>
+
+  <div class="live" id="live"></div>
+  <div class="overlay" id="overlay"></div>
+  <div id="sheets"></div>
+  <div id="toast"></div>
+
+  <script src="core.js"></script>
+  <script src="ble.js"></script>
+  <script src="ui.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
