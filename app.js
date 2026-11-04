@@ -14,7 +14,7 @@ const S = {
   profiles: store.get("profiles", []),
   activeId: store.get("active", null),
   sessions: store.get("sessions", []),
-  settings: Object.assign({ pct: 6.3, lastMode: "flat", burn: "h", lastSpeed: 5, quickMin: 30 }, store.get("settings", {})),
+  settings: Object.assign({ pct: 6.3, lastMode: "flat", burn: "h", lastSpeed: 5, quickMin: 30, startMode: "inc" }, store.get("settings", {})),
   live: store.get("live", null),
   plans: store.get("plans", [])
 };
@@ -135,7 +135,7 @@ function renderHome() {
   const q = quickPlan();
   $("#cta").innerHTML = S.live
     ? `<button class="cta-go" data-act="start"><span class="play">${icon("play", 16)}</span>Volver a la caminata</button>`
-    : `<button class="cta-go" data-act="start"><span class="play">${icon("play", 16)}</span><span class="cta-t">Empezar<small>${fmtGoal(q.goal)} · ${dec1(q.base)} km/h</small></span></button>
+    : `<button class="cta-go" data-act="start"><span class="play">${icon("play", 16)}</span><span class="cta-t">Empezar<small>${fmtGoal(q.goal)} · ${dec1(q.base)} km/h · ${q.mode === "inc" ? "Inclinada" : "Plano"}</small></span></button>
        <button class="cta-plan" data-act="plan" aria-label="Caminata a medida">${icon("sliders", 24)}</button>`;
 
   requestAnimationFrame(() => {
@@ -333,6 +333,8 @@ function renderProfile() {
     <div class="group">
       ${row("mountain", "Inclinada", `${dec1(S.settings.pct)} %`, "pct")}
       ${row("bolt", "Caminata rápida", `${S.settings.quickMin || 30} min`, "quick")}
+      <div class="row row-col"><div style="display:flex;align-items:center;gap:14px"><span class="ri">${icon("flat", 18)}</span><span class="rl">Arranca en</span></div>
+        ${UI.seg("startmode", [{ v: "flat", label: "PLANO" }, { v: "inc", label: "INCLINADA" }], S.settings.startMode || "inc", "mode")}</div>
       <button class="row" data-act="diag"><span class="ri">${icon("bolt", 18)}</span><span class="rl">Diagnóstico</span>${icon("chevR", 18, "chev")}</button>
       <button class="row" data-act="device"><span class="ri">${icon("bt", 18)}</span><span class="rl">Conexión</span><span class="rv">${ble.connected ? "Conectada" : "Desconectada"}</span>${icon("chevR", 18, "chev")}</button>
     </div>
@@ -571,7 +573,7 @@ function openSession(s, fresh = false) {
 // plan: { id?, name, goal: {type: time|kcal|km|free, value}, base (km/h), mode, warm, steps: [{at (min), speed, mode|null}] }
 const GOALS = [{ v: "time", label: "Tiempo" }, { v: "kcal", label: "Kcal" }, { v: "km", label: "Km" }, { v: "free", label: "Libre" }];
 const GOAL_DEF = { time: 30, kcal: 300, km: 3, free: 0 };
-const quickPlan = () => ({ name: "Rápida", quick: true, goal: { type: "time", value: S.settings.quickMin || 30 }, base: S.settings.lastSpeed || 5, mode: S.settings.lastMode || "flat", warm: true, steps: [] });
+const quickPlan = () => ({ name: "Rápida", quick: true, goal: { type: "time", value: S.settings.quickMin || 30 }, base: S.settings.lastSpeed || 5, mode: S.settings.startMode || "inc", warm: true, steps: [] });
 const fmtGoal = g => !g || g.type === "free" ? "Libre" : g.type === "time" ? `${Math.max(1, Math.round(g.value))} min` : g.type === "km" ? `${dec1(g.value)} km` : `${int(g.value)} kcal`;
 const suggestName = d => `${d.goal.type === "free" ? "Libre" : fmtGoal(d.goal)} a ${dec1(d.base)}`;
 const speedCols = v => [{ values: UI.range(1, 12), value: Math.min(12, Math.max(1, Math.floor(v + 1e-6))), width: "70px" }, { values: UI.range(0, 9), value: Math.round(v * 10) % 10, width: "60px" }];
@@ -650,7 +652,7 @@ function planSvg(sim) {
 // Hoja "Caminata a medida": meta, velocidad, arranque suave, cambios de ritmo, vista previa y planes guardados.
 function planner({ cont = false, from = null } = {}) {
   const p = cont && S.live ? byId(S.live.profileId) : me();
-  const fresh = () => ({ name: "", goal: { type: "time", value: S.settings.quickMin || 30 }, base: S.settings.lastSpeed || 5, mode: S.settings.lastMode || "flat", warm: true, steps: [] });
+  const fresh = () => ({ name: "", goal: { type: "time", value: S.settings.quickMin || 30 }, base: S.settings.lastSpeed || 5, mode: S.settings.startMode || "inc", warm: true, steps: [] });
   let d = from ? JSON.parse(JSON.stringify(from)) : fresh();
   const gval = g => g.type === "time" ? `${g.value}` : g.type === "km" ? dec1(g.value) : int(g.value);
   const body = document.createElement("div");
@@ -857,34 +859,31 @@ function buildLive() {
           <div class="ring-in">${icon("flame", 18)}<b class="num" id="L-kcal">0</b><span id="L-kw">kcal</span></div>
         </div>
         <div class="burn" id="L-burn">
-          <span class="flame">${icon("flame", 22)}</span>
+          <span class="flame">${icon("flame", 20)}</span>
           <div class="lbl">Ritmo de quema</div>
-          <div class="val"><b class="num" id="L-rate">0</b><span id="L-ru">kcal/h</span></div>
-          <div class="units" id="L-units">${[["h", "/h"], ["min", "/min"], ["km", "/km"]].map(([v, l]) => `<button data-u="${v}">${l}</button>`).join("")}</div>
-          <div class="meter"><div class="meter-fill" id="L-mfill"></div><div class="meter-knob" id="L-mknob"></div></div>
+          <div class="bv"><b class="num" id="L-rmin">0</b><span>kcal/min</span></div>
+          <div class="bv sec"><b class="num" id="L-rkm">0</b><span>kcal/km</span></div>
+          <div class="meter"><i class="z"></i><i class="z"></i><i class="z"></i><div class="meter-knob" id="L-mknob"></div></div>
           <div class="tag" id="L-int">—</div>
         </div>
       </div>
 
       <div class="live-stats">
         <div><span class="lbl">Distancia</span><b class="num" id="L-km">0,00</b><span class="u">km</span></div>
-        <div><span class="lbl">Velocidad</span><b class="num" id="L-spd">0,0</b><span class="u">km/h</span></div>
         <div><span class="lbl">Ritmo</span><b class="num" id="L-pace">--:--</b><span class="u">min/km</span></div>
       </div>
 
       ${UI.seg("lmode", [{ v: "flat", label: "PLANO" }, { v: "inc", label: "INCLINADA" }], "flat", "big mode")}
 
-      <div class="speed-ctl" id="L-ctl">
-        <button class="big" data-d="-0.5">−0.5</button>
-        <button data-d="-0.1">−0.1</button>
-        <div class="sv" id="L-target"><b class="num">0,0</b><span>KM/H</span></div>
-        <button data-d="0.1">+0.1</button>
-        <button class="big" data-d="0.5">+0.5</button>
+      <div class="spd" id="L-ctl">
+        <div class="spd-col"><button class="dn x5" data-d="-0.5"><i>−</i>0,5</button><button class="dn" data-d="-0.1"><i>−</i>0,1</button></div>
+        <div class="sv" id="L-target"><span class="lbl">Velocidad</span><b class="num">0,0</b><span>km/h</span></div>
+        <div class="spd-col"><button class="up x5" data-d="0.5"><i>+</i>0,5</button><button class="up" data-d="0.1"><i>+</i>0,1</button></div>
       </div>
 
       <div class="live-actions">
-        <div><button class="round pause" id="L-pause">${icon("pause", 28)}</button><div class="act-lbl" id="L-plbl">Pausa</div></div>
-        <div><button class="round stop" id="L-stop">${icon("stop", 26)}<svg class="hold" viewBox="0 0 92 92"><circle cx="46" cy="46" r="44"/></svg></button><div class="act-lbl">Mantené</div></div>
+        <button class="act pause" id="L-pause"><span id="L-pic">${icon("pause", 22)}</span><b id="L-plbl">Pausa</b></button>
+        <button class="act stop" id="L-stop"><i class="hold-fill"></i><span class="act-in">${icon("stop", 20)}<span class="act-t"><b>Finalizar</b><small>Mantené</small></span></span></button>
       </div>
     </div>`;
 
@@ -895,11 +894,6 @@ function buildLive() {
     save.live(); save.settings(); haptic(12);
     UI.setSeg($('[data-seg="lmode"]'), b.dataset.v);
     updateLive();
-  };
-  $("#L-units").onclick = e => {
-    const b = e.target.closest("button[data-u]");
-    if (!b) return;
-    S.settings.burn = b.dataset.u; save.settings(); haptic(6); updateLive();
   };
   $("#L-ctl").onclick = e => {
     const b = e.target.closest("button[data-d]");
@@ -962,17 +956,16 @@ function updateLive() {
   $("#L-kcal").textContent = int(kc);
   $("#L-kw").textContent = isNet(p) ? "kcal netas" : "kcal";
   $("#L-km").textContent = dec2(liveKm(L, t));
-  $("#L-spd").textContent = dec1(spd);
   $("#L-pace").textContent = C.fmtPace(spd);
-  const u = S.settings.burn || "h";
-  const shown = !moving ? 0 : u === "min" ? rate / 60 : u === "km" ? rate / spd : rate;
-  $("#L-rate").textContent = u === "min" ? dec1(shown) : int(shown);
-  $("#L-ru").textContent = u === "min" ? "kcal/min" : u === "km" ? "kcal/km" : "kcal/h";
-  $$("#L-units button").forEach(b => b.classList.toggle("on", b.dataset.u === u));
-  $("#L-mfill").style.width = (moving ? pct * 100 : 0) + "%";
-  $("#L-mknob").style.left = (moving ? pct * 100 : 0) + "%";
-  $("#L-int").textContent = !moving ? "En espera" : pct < .35 ? "Suave" : pct < .65 ? "Moderado" : pct < .85 ? "Intenso" : "Máximo";
-  $("#L-rate").style.color = moving && pct >= .65 ? "#FF7A5C" : "";
+  // Intensidad en METs (consumo total / reposo): <3 suave, 3–6 moderada, ≥6 vigorosa.
+  const mets = moving ? rateK.gross / (L.kg * 5 / 1000) / 3.5 : 0;
+  const zi = mets < 3 ? 0 : mets < 6 ? 1 : 2;
+  $("#L-rmin").textContent = moving ? dec1(rate / 60) : "0";
+  $("#L-rkm").textContent = moving ? int(rate / spd) : "0";
+  $("#L-mknob").style.left = (moving ? Math.min(1, Math.max(0, (mets - 1) / 9)) * 100 : 0) + "%";
+  $$("#L-burn .z").forEach((z, i) => z.classList.toggle("on", moving && i === zi));
+  $("#L-int").textContent = !moving ? "En espera" : `${["Suave", "Moderada", "Vigorosa"][zi]} · ${dec1(mets)} METs`;
+  $("#L-burn").dataset.z = moving ? zi : "";
   UI.setRing($("#live .ring"), (weekKcal(p) + kc) / (p.goal || 2000));
 
   const stateTxt = L.state === "paused" ? "En pausa" : L.state === "countdown" ? "Arrancando" : !ble.connected ? "Reconectando" : spd > 0 ? "En marcha" : "Esperando la cinta";
@@ -1001,12 +994,12 @@ function updateLive() {
   const showTarget = targetSpeed != null && Date.now() - targetAt < 3000;
   const tg = $("#L-target");
   tg.classList.toggle("pending", showTarget);
-  tg.firstElementChild.textContent = dec1(showTarget ? targetSpeed : spd);
+  tg.querySelector("b").textContent = dec1(showTarget ? targetSpeed : spd);
   $$("#L-ctl button").forEach(b => b.disabled = L.state !== "running" || !ble.connected);
 
   const act = L.state !== "paused";               // corriendo o arrancando → muestra "Pausa"
-  $("#L-pause").className = "round " + (act ? "pause" : "resume");
-  $("#L-pause").innerHTML = icon(act ? "pause" : "play", 28);
+  $("#L-pause").className = "act " + (act ? "pause" : "resume");
+  $("#L-pic").innerHTML = icon(act ? "pause" : "play", 22);
   $("#L-plbl").textContent = act ? "Pausa" : "Seguir";
 }
 
@@ -1050,7 +1043,7 @@ async function startFlow(plan) {
 }
 function createLive(p, state) {
   controlWarned = false;
-  S.live = { id: uid(), profileId: p.id, start: Date.now(), mode: S.settings.lastMode || "flat", state, kg: p.weight, segs: [], samples: [], acc: 0, run: 0 };
+  S.live = { id: uid(), profileId: p.id, start: Date.now(), mode: S.settings.startMode || "inc", state, kg: p.weight, segs: [], samples: [], acc: 0, run: 0 };
   save.live();
 }
 
@@ -1275,6 +1268,7 @@ document.addEventListener("click", e => {
     const name = segBtn.parentElement.dataset.seg, v = segBtn.dataset.v;
     haptic(6);
     if (name === "period") { view.period = v; view.offset = 0; view.sel = -1; UI.setSeg(segBtn.parentElement, v); setTimeout(render, 180); }
+    if (name === "startmode") { S.settings.startMode = v; save.settings(); UI.setSeg(segBtn.parentElement, v); }
     if (name === "kcalmode") { me().kcalMode = v; save.profiles(); UI.setSeg(segBtn.parentElement, v); setTimeout(render, 200); }
   }
   const bar = e.target.closest(".screen .bar");
@@ -1282,7 +1276,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.5.1";
+const VERSION = "1.6";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
