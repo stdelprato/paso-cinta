@@ -332,7 +332,7 @@ function renderProfile() {
     <div class="group-t">Cinta</div>
     <div class="group">
       ${row("mountain", "Inclinada", `${dec1(S.settings.pct)} %`, "pct")}
-      ${row("bolt", "Caminata rápida", `${S.settings.quickMin || 30} min`, "quick")}
+      ${row("target", "Meta planificada", `${S.settings.quickMin || 30} min`, "quick")}
       <div class="row row-col"><div style="display:flex;align-items:center;gap:14px"><span class="ri">${icon("flat", 18)}</span><span class="rl">Arranca en</span></div>
         ${UI.seg("startmode", [{ v: "flat", label: "PLANO" }, { v: "inc", label: "INCLINADA" }], S.settings.startMode || "inc", "mode")}</div>
       <button class="row" data-act="diag"><span class="ri">${icon("bolt", 18)}</span><span class="rl">Diagnóstico</span>${icon("chevR", 18, "chev")}</button>
@@ -368,7 +368,7 @@ const PICK = {
     columns: [{ values: UI.range(0, 15), value: Math.floor(S.settings.pct), width: "70px" }, { values: UI.range(0, 9), value: Math.round((S.settings.pct % 1) * 10) % 10, width: "64px" }],
     onDone: ([x, y]) => done({ pct: x + y / 10 })
   }),
-  quick: (_, done) => UI.pick({ title: "Caminata rápida", unit: "min", columns: [{ values: UI.range(5, 180, 5), value: S.settings.quickMin || 30 }], onDone: ([m]) => done({ quick: m }) })
+  quick: (_, done) => UI.pick({ title: "Meta planificada", unit: "min", columns: [{ values: UI.range(5, 180, 5), value: S.settings.quickMin || 30 }], onDone: ([m]) => done({ quick: m }) })
 };
 
 function editField(f) {
@@ -573,7 +573,7 @@ function openSession(s, fresh = false) {
 // plan: { id?, name, goal: {type: time|kcal|km|free, value}, base (km/h), mode, warm, steps: [{at (min), speed, mode|null}] }
 const GOALS = [{ v: "time", label: "Tiempo" }, { v: "kcal", label: "Kcal" }, { v: "km", label: "Km" }, { v: "free", label: "Libre" }];
 const GOAL_DEF = { time: 30, kcal: 300, km: 3, free: 0 };
-const quickPlan = () => ({ name: "Rápida", quick: true, goal: { type: "time", value: S.settings.quickMin || 30 }, base: S.settings.lastSpeed || 5, mode: S.settings.startMode || "inc", warm: true, steps: [] });
+const quickPlan = () => ({ name: "Rápida", quick: true, goal: { type: "free", value: 0 }, base: S.settings.lastSpeed || 5, mode: S.settings.startMode || "inc", warm: true, steps: [] });
 const fmtGoal = g => !g || g.type === "free" ? "Libre" : g.type === "time" ? `${Math.max(1, Math.round(g.value))} min` : g.type === "km" ? `${dec1(g.value)} km` : `${int(g.value)} kcal`;
 const suggestName = d => `${d.goal.type === "free" ? "Libre" : fmtGoal(d.goal)} a ${dec1(d.base)}`;
 const speedCols = v => [{ values: UI.range(1, 12), value: Math.min(12, Math.max(1, Math.floor(v + 1e-6))), width: "70px" }, { values: UI.range(0, 9), value: Math.round(v * 10) % 10, width: "60px" }];
@@ -988,6 +988,7 @@ function updateLive() {
     const marks = g && g.type === "time" ? pr.steps.filter(s => s.at < g.value).map(s => `<b style="left:${(s.at / g.value * 100).toFixed(2)}%"></b>`).join("") : "";
     if (pl.dataset.m !== marks) { pl.dataset.m = marks; $("#L-pmarks").innerHTML = marks; }
     const nx = pr.done ? null : planNext(pr, pt);
+    if (!pg && !nx && !pr.done) { pl.hidden = true; live.classList.remove("has-plan"); } // libre y sin cambios: solo el reloj
     $("#L-pnext").innerHTML = nx ? `<span>${pr.warm && pt < 10 ? "Calentando" : "Próximo"}</span><b class="num">${dec1(nx.speed)} km/h</b>${nx.mode ? `<i class="md ${nx.mode}">${nx.mode === "inc" ? "INCLINADA" : "PLANO"}</i>` : ""}<em class="num">en ${C.fmtTime(nx.in)}</em>` : "";
   }
 
@@ -1276,7 +1277,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.6";
+const VERSION = "1.6.1";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);

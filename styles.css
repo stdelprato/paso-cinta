@@ -678,3 +678,15 @@ input[type="datetime-local"].field { font-size: 15px; color-scheme: dark; }
 .live-stats > div > b + .u { margin-top: 0; }
 .seg.big.mode button { height: 46px; }
 .act { height: 66px; }
+/* barra inferior pantalla completa, plana */
+.live-actions { margin: auto -20px calc(-1 * (var(--sb) + 20px)); padding: 0; gap: 0; grid-template-columns: 1fr 1.5fr; border-top: 1px solid var(--line); }
+.act { height: calc(84px + var(--sb)); padding-bottom: var(--sb); border-radius: 0; box-shadow: none !important; border: 0 !important; font-size: 17px; font-weight: 750; letter-spacing: 0; }
+.act:active { transform: none; filter: brightness(1.15); }
+.act .ic { display: none; }
+.act.pause { background: var(--s1); color: var(--t1); }
+.act.resume { background: var(--acc); color: var(--ink); }
+.act.stop { background: #ff4d5e; color: #fff; }
+.act-t { align-items: center; }
+.act-t b { font-size: 18px; font-weight: 800; }
+.act-t small { color: rgba(255, 255, 255, .7); font-size: 10px; letter-spacing: .12em; }
+.hold-fill { background: rgba(0, 0, 0, .2); }
