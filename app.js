@@ -14,15 +14,17 @@ const S = {
   profiles: store.get("profiles", []),
   activeId: store.get("active", null),
   sessions: store.get("sessions", []),
-  settings: Object.assign({ pct: 6.3, lastMode: "flat", burn: "h" }, store.get("settings", {})),
-  live: store.get("live", null)
+  settings: Object.assign({ pct: 6.3, lastMode: "flat", burn: "h", lastSpeed: 5, quickMin: 30 }, store.get("settings", {})),
+  live: store.get("live", null),
+  plans: store.get("plans", [])
 };
 const save = {
   profiles: () => store.set("profiles", S.profiles),
   active: () => store.set("active", S.activeId),
   sessions: () => store.set("sessions", S.sessions),
   settings: () => store.set("settings", S.settings),
-  live: () => store.set("live", S.live)
+  live: () => store.set("live", S.live),
+  plans: () => store.set("plans", S.plans)
 };
 const view = { tab: "home", period: "week", offset: 0, metric: "kcal", sel: -1 };
 const ble = new Treadmill();
@@ -130,9 +132,11 @@ function renderHome() {
       </button>
     </div>`;
 
+  const q = quickPlan();
   $("#cta").innerHTML = S.live
-    ? `<span class="play">${icon("play", 16)}</span>Volver a la caminata`
-    : `<span class="play">${icon("play", 16)}</span>Empezar caminata`;
+    ? `<button class="cta-go" data-act="start"><span class="play">${icon("play", 16)}</span>Volver a la caminata</button>`
+    : `<button class="cta-go" data-act="start"><span class="play">${icon("play", 16)}</span><span class="cta-t">Empezar<small>${fmtGoal(q.goal)} · ${dec1(q.base)} km/h</small></span></button>
+       <button class="cta-plan" data-act="plan" aria-label="Caminata a medida">${icon("sliders", 24)}</button>`;
 
   requestAnimationFrame(() => {
     const r = $("#s-home .ring");
@@ -328,6 +332,7 @@ function renderProfile() {
     <div class="group-t">Cinta</div>
     <div class="group">
       ${row("mountain", "Inclinada", `${dec1(S.settings.pct)} %`, "pct")}
+      ${row("bolt", "Caminata rápida", `${S.settings.quickMin || 30} min`, "quick")}
       <button class="row" data-act="diag"><span class="ri">${icon("bolt", 18)}</span><span class="rl">Diagnóstico</span>${icon("chevR", 18, "chev")}</button>
       <button class="row" data-act="device"><span class="ri">${icon("bt", 18)}</span><span class="rl">Conexión</span><span class="rv">${ble.connected ? "Conectada" : "Desconectada"}</span>${icon("chevR", 18, "chev")}</button>
     </div>
@@ -360,14 +365,19 @@ const PICK = {
     title: "Inclinación (INCLINADA)", sep: ",", unit: "%",
     columns: [{ values: UI.range(0, 15), value: Math.floor(S.settings.pct), width: "70px" }, { values: UI.range(0, 9), value: Math.round((S.settings.pct % 1) * 10) % 10, width: "64px" }],
     onDone: ([x, y]) => done({ pct: x + y / 10 })
-  })
+  }),
+  quick: (_, done) => UI.pick({ title: "Caminata rápida", unit: "min", columns: [{ values: UI.range(5, 180, 5), value: S.settings.quickMin || 30 }], onDone: ([m]) => done({ quick: m }) })
 };
 
 function editField(f) {
   const p = me();
   if (f === "name") return nameSheet(p.name, name => { p.name = name; save.profiles(); render(); });
   PICK[f](p, ch => {
-    if (ch.pct !== undefined) { S.settings.pct = ch.pct; save.settings(); }
+    if (ch.pct !== undefined || ch.quick !== undefined) {
+      if (ch.pct !== undefined) S.settings.pct = ch.pct;
+      if (ch.quick !== undefined) S.settings.quickMin = ch.quick;
+      save.settings();
+    }
     else {
       if (ch.weight !== undefined) logWeight(p, ch.weight);
       Object.assign(p, ch); save.profiles();
@@ -389,9 +399,9 @@ function daysSinceWeigh(p) {
   return w.length ? Math.floor((Date.now() - w[w.length - 1].t) / 864e5) : 99;
 }
 
-function nameSheet(cur, done) {
-  const s = UI.sheet(`<div class="sheet-body"><h3 class="sheet-title">Nombre</h3>
-    <input class="field" id="nm" maxlength="24" placeholder="¿Cómo te llamás?" value="${esc(cur || "")}" autocomplete="off">
+function nameSheet(cur, done, o = {}) {
+  const s = UI.sheet(`<div class="sheet-body"><h3 class="sheet-title">${esc(o.title || "Nombre")}</h3>
+    <input class="field" id="nm" maxlength="24" placeholder="${esc(o.ph || "¿Cómo te llamás?")}" value="${esc(cur || "")}" autocomplete="off">
     <button class="btn btn-primary" data-ok>Listo</button></div>`);
   const inp = s.el.querySelector("#nm");
   setTimeout(() => inp.focus(), 350);
@@ -513,42 +523,311 @@ function openSession(s, fresh = false) {
   const avg = s.sec ? s.km / (s.sec / 3600) : 0;
   const incPct = s.sec ? Math.round((s.incSec || 0) / s.sec * 100) : 0;
   const kc = kcalOf(s, p);
-  const other = isNet(p) ? `${int(s.gross)} kcal totales` : `${int(s.net)} netas · ${int(s.gross - s.net)} de reposo`;
+  const other = isNet(p) ? `${int(s.gross)} totales` : `${int(s.net)} netas + ${int(s.gross - s.net)} reposo`;
   const segs = (s.segs || []).filter(g => g.sec >= 20);
   const samples = s.samples || [];
   const maxS = samples.length ? Math.max(...samples) : 0;
+  const hits = s.hits || [];
+  const rd = relDay(s.start);
+  const title = fresh ? `¡Buen trabajo, ${esc(firstName(p))}!` : rd === "Hoy" || rd === "Ayer" ? rd : fmtDay(s.start, { weekday: "long", day: "numeric", month: "short" });
   const body = `
     <div class="sum">
-      <div class="sum-head">
-        ${fresh ? `<div class="sum-badge">${icon("check", 30)}</div><h2>¡Buen trabajo, ${esc(firstName(p))}!</h2>` : `<h2>${relDay(s.start) === "Hoy" || relDay(s.start) === "Ayer" ? relDay(s.start) : fmtDay(s.start, { weekday: "long", day: "numeric", month: "long" })}</h2>`}
-        <p>${fmtDay(s.start, { weekday: "long", day: "numeric", month: "short" })} · ${fmtHour(s.start)}${s.source === "manual" ? " · cargada a mano" : ""}</p>
+      <div class="sum-top">
+        ${fresh ? `<div class="sum-badge">${icon("check", 24)}</div>` : ""}
+        <div class="grow"><h2>${title}</h2><p>${fmtDay(s.start, { weekday: "short", day: "numeric", month: "short" })} · ${fmtHour(s.start)}${s.planName ? " · " + esc(s.planName) : ""}${s.source === "manual" ? " · a mano" : ""}</p></div>
       </div>
-      <div class="sum-kcal">${icon("flame", 26)}<b class="num" id="sk">0</b><span>${kcalWord(p)} · ${other}</span></div>
-      <div class="tiles">
-        <div class="tile">${icon("clock", 18, "c-time")}<b class="num">${C.fmtTime(s.sec)}</b><span>tiempo</span></div>
-        <div class="tile">${icon("route", 18, "c-dist")}<b class="num">${dec2(s.km)}</b><span>km</span></div>
-        <div class="tile">${icon("gauge", 18, "c-acc")}<b class="num">${dec1(avg)}</b><span>km/h media</span></div>
-        <div class="tile">${icon("bolt", 18, "c-acc")}<b class="num">${C.fmtPace(avg)}</b><span>min/km</span></div>
-        <div class="tile">${icon("steps", 18, "c-dist")}<b class="num">${int(C.steps(s.km, p.height))}</b><span>pasos</span></div>
-        <div class="tile">${icon("mountain", 18, "c-k2")}<b class="num">${incPct}%</b><span>inclinada</span></div>
+      ${hits.length ? `<div class="sum-goal">${icon("trophy", 16)}Meta cumplida · ${hits.map(h => fmtGoal(h.goal)).join(" + ")}</div>` : ""}
+      <div class="sum-hero">
+        <div class="sh-k">${icon("flame", 20)}<b class="num" id="sk">0</b><span>${kcalWord(p)}</span><em>${other}</em></div>
+        <div class="sh-s">
+          <div>${icon("clock", 15, "c-time")}<b class="num">${C.fmtTime(s.sec)}</b></div>
+          <div>${icon("route", 15, "c-dist")}<b class="num">${dec2(s.km)}<small>km</small></b></div>
+          <div>${icon("gauge", 15, "c-acc")}<b class="num">${dec1(avg)}<small>km/h</small></b></div>
+        </div>
       </div>
-      ${samples.length > 3 ? `<div class="card" style="margin:0">
-        <div class="card-h"><span class="card-t">Velocidad</span><span class="card-s">máx ${dec1(maxS)} km/h</span></div>
-        <div class="spd-chart">${UI.area(samples, { min: 0, max: Math.max(maxS * 1.15, 1) })}</div>
-        <div class="spd-axis"><span>0:00</span><span>${C.fmtTime(s.sec / 2)}</span><span>${C.fmtTime(s.sec)}</span></div>
+      <div class="sum-chips">
+        <span><b class="num">${C.fmtPace(avg)}</b>min/km</span>
+        <span><b class="num">${int(C.steps(s.km, p.height))}</b>pasos</span>
+        <span><b class="num">${incPct}%</b>inclinada</span>
+      </div>
+      ${samples.length > 3 || segs.length > 1 ? `<div class="sum-chart">
+        <div class="sc-h"><span>${samples.length > 3 ? `Velocidad · máx ${dec1(maxS)}` : "Tramos"}</span>${segs.length > 1 ? `<button data-tramos>${segs.length} tramos${icon("chevR", 14)}</button>` : ""}</div>
+        ${samples.length > 3 ? `<div class="spd-chart sm">${UI.area(samples, { min: 0, max: Math.max(maxS * 1.15, 1), h: 70 })}</div>` : ""}
+        <div class="segs-list" hidden>${segs.map(g => `<div class="sg"><i class="m ${g.grade > 0 ? "inc" : ""}"></i><div class="a num">${dec1(g.speed)} km/h<span>${g.grade > 0 ? "Inclinada" : "Plano"}</span></div><div class="b num">${C.fmtTime(g.sec)}<span>${int(isNet(p) ? g.net : g.gross)} kcal</span></div></div>`).join("")}</div>
       </div>` : ""}
-      ${segs.length > 1 ? `<div class="card segs-list" style="margin:0"><div class="card-h"><span class="card-t">Tramos</span><span class="card-s">${segs.length}</span></div>
-        ${segs.map(g => `<div class="sg"><i class="m ${g.grade > 0 ? "inc" : ""}"></i><div class="a num">${dec1(g.speed)} km/h<span>${g.grade > 0 ? "Inclinada" : "Plano"}</span></div><div class="b num">${C.fmtTime(g.sec)}<span>${int(isNet(p) ? g.net : g.gross)} kcal</span></div></div>`).join("")}
-      </div>` : ""}
-      <button class="btn btn-primary" data-close>${fresh ? "Listo" : "Cerrar"}</button>
-      <button class="btn btn-ghost" data-del style="color:var(--danger)">${icon("trash", 18)}Eliminar caminata</button>
+      <div class="sum-act"><button class="btn btn-primary" data-close>${fresh ? "Listo" : "Cerrar"}</button><button class="icon-btn del" data-del aria-label="Eliminar caminata">${icon("trash", 20)}</button></div>
     </div>`;
-  const sh = UI.sheet(body, { cls: "full" });
+  const sh = UI.sheet(body);
   setTimeout(() => UI.countUp(sh.el.querySelector("#sk"), kc, int, 1100), fresh ? 300 : 150);
+  const tb = sh.el.querySelector("[data-tramos]");
+  if (tb) tb.onclick = () => { const l = sh.el.querySelector(".segs-list"); l.hidden = !l.hidden; tb.classList.toggle("on", !l.hidden); haptic(6); };
   sh.el.querySelector("[data-del]").onclick = async () => {
     if (!(await UI.confirm({ title: "¿Eliminar esta caminata?", text: "No se puede deshacer.", ok: "Eliminar", danger: true }))) return;
     S.sessions = S.sessions.filter(x => x.id !== s.id); save.sessions(); sh.close(); render();
   };
+}
+
+// ================= planes =================
+// plan: { id?, name, goal: {type: time|kcal|km|free, value}, base (km/h), mode, warm, steps: [{at (min), speed, mode|null}] }
+const GOALS = [{ v: "time", label: "Tiempo" }, { v: "kcal", label: "Kcal" }, { v: "km", label: "Km" }, { v: "free", label: "Libre" }];
+const GOAL_DEF = { time: 30, kcal: 300, km: 3, free: 0 };
+const quickPlan = () => ({ name: "Rápida", quick: true, goal: { type: "time", value: S.settings.quickMin || 30 }, base: S.settings.lastSpeed || 5, mode: S.settings.lastMode || "flat", warm: true, steps: [] });
+const fmtGoal = g => !g || g.type === "free" ? "Libre" : g.type === "time" ? `${g.value} min` : g.type === "km" ? `${dec1(g.value)} km` : `${int(g.value)} kcal`;
+const suggestName = d => `${d.goal.type === "free" ? "Libre" : fmtGoal(d.goal)} a ${dec1(d.base)}`;
+const speedCols = v => [{ values: UI.range(1, 12), value: Math.min(12, Math.max(1, Math.floor(v + 1e-6))), width: "70px" }, { values: UI.range(0, 9), value: Math.round(v * 10) % 10, width: "60px" }];
+const speedOf = ([x, y]) => Math.min(12, Math.round((x + y / 10) * 10) / 10);
+
+// Velocidad que pide el plan a los pt segundos: 2 km/h 5 s, sube hasta la base a los 10 s, después los cambios.
+function planTarget(pr, pt) {
+  if (pr.warm && pt < 5) return { key: "w", speed: 2, mode: null };
+  if (pr.warm && pt < 10) { const v = Math.round((2 + (pr.base - 2) * (pt - 5) / 5) * 10) / 10; return { key: "r" + v, speed: v, mode: null }; }
+  let r = { key: "b", speed: pr.base, mode: null };
+  (pr.steps || []).forEach((st, i) => { if (pt >= st.at * 60) r = { key: "s" + i, speed: st.speed, mode: st.mode || null }; });
+  return r;
+}
+function planNext(pr, pt) {
+  if (pr.warm && pt < 10) return { in: 10 - pt, speed: pr.base, mode: null };
+  const st = (pr.steps || []).find(s => s.at * 60 > pt);
+  return st ? { in: st.at * 60 - pt, speed: st.speed, mode: st.mode } : null;
+}
+function planProgress(L) {
+  const pr = L.prog;
+  if (!pr || !pr.goal || pr.goal.type === "free") return null;
+  const t = C.totals(L.segs), p = byId(L.profileId), g = pr.goal;
+  const cur = Math.max(0, g.type === "time" ? ((L.run || 0) - pr.t0) / 60 : g.type === "km" ? liveKm(L, t) - pr.km0 : isNet(p) ? t.net - pr.net0 : t.gross - pr.gross0);
+  return { cur, pct: Math.min(1, cur / g.value) };
+}
+function attachPlan(L, plan, cont = false) {
+  const t = C.totals(L.segs);
+  L.prog = {
+    name: plan.name, quick: !!plan.quick, goal: plan.goal, base: plan.base, warm: !cont && plan.warm !== false,
+    steps: (plan.steps || []).slice().sort((x, y) => x.at - y.at),
+    t0: L.run || 0, km0: liveKm(L, t), net0: t.net, gross0: t.gross, key: null, done: false
+  };
+  if (plan.mode) L.mode = plan.mode;
+  L.planNames = [...(L.planNames || []), plan.name];
+  save.live();
+}
+
+// Simula el plan (cada 5 s) para la vista previa: duración, km y kcal estimadas.
+function simulate(d, kg, net) {
+  const pr = { ...d, steps: (d.steps || []).slice().sort((x, y) => x.at - y.at) };
+  const g = d.goal || { type: "free" };
+  const lastAt = pr.steps.length ? pr.steps[pr.steps.length - 1].at : 0;
+  const freeEnd = Math.max(30, lastAt + 10) * 60;
+  let t = 0, km = 0, kc = 0, mode = d.mode || "flat";
+  const pts = [];
+  while (t < 240 * 60) {
+    const tg = planTarget(pr, t);
+    if (tg.mode) mode = tg.mode;
+    const r = C.kcalPerMin(tg.speed, gradeOf(mode), kg);
+    kc += (net ? r.net : r.gross) * 5 / 60; km += tg.speed * 5 / 3600; t += 5;
+    pts.push([t, tg.speed, mode]);
+    if (g.type === "time" ? t >= g.value * 60 : g.type === "km" ? km >= g.value : g.type === "kcal" ? kc >= g.value : t >= freeEnd) break;
+  }
+  return { sec: t, km, kc, pts };
+}
+function planSvg(sim) {
+  const W = 320, H = 80, T = sim.sec || 1;
+  const maxV = Math.max(3, ...sim.pts.map(q => q[1])) * 1.12;
+  const X = t => (t / T * W).toFixed(1), Y = v => (H - v / maxV * H).toFixed(1);
+  const runs = []; let cur = null, pt = 0;
+  sim.pts.forEach(([t, v, m]) => {
+    if (!cur || cur.m !== m) { cur = { m, p: cur ? [cur.p[cur.p.length - 1].slice()] : [] }; runs.push(cur); }
+    const last = cur.p[cur.p.length - 1];
+    if (last && cur.p.length > 1 && last[1] === v) last[0] = t; else cur.p.push([pt, v], [t, v]);
+    pt = t;
+  });
+  const parts = runs.map(r => {
+    const line = r.p.map(([t, v]) => `${X(t)},${Y(v)}`).join(" ");
+    const inc = r.m === "inc";
+    return `<polygon points="${X(r.p[0][0])},${H} ${line} ${X(r.p[r.p.length - 1][0])},${H}" fill="url(#${inc ? "pgI" : "pgF"})"/><polyline points="${line}" fill="none" stroke="${inc ? "#FF5A8A" : "#C6FF3D"}" stroke-width="2.4" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
+  }).join("");
+  const grad = (id, c) => `<linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c}" stop-opacity=".32"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></linearGradient>`;
+  return `<svg class="pl-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs>${grad("pgF", "#C6FF3D")}${grad("pgI", "#FF3D71")}</defs>${parts}</svg>`;
+}
+
+// Hoja "Caminata a medida": meta, velocidad, arranque suave, cambios de ritmo, vista previa y planes guardados.
+function planner({ cont = false, from = null } = {}) {
+  const p = cont && S.live ? byId(S.live.profileId) : me();
+  const fresh = () => ({ name: "", goal: { type: "time", value: S.settings.quickMin || 30 }, base: S.settings.lastSpeed || 5, mode: S.settings.lastMode || "flat", warm: true, steps: [] });
+  let d = from ? JSON.parse(JSON.stringify(from)) : fresh();
+  const gval = g => g.type === "time" ? `${g.value}` : g.type === "km" ? dec1(g.value) : int(g.value);
+  const body = document.createElement("div");
+  body.className = "sheet-body planner";
+  const draw = () => {
+    d.steps.sort((x, y) => x.at - y.at);
+    const sim = simulate(d, p.weight, isNet(p));
+    body.innerHTML = `
+      <h3 class="sheet-title">${cont ? "Seguir con un plan" : "Caminata a medida"}</h3>
+      ${S.plans.length ? `<div class="pl-saved">${d.id ? `<button class="pl-chip" data-load="">${icon("plus", 14)}Nuevo</button>` : ""}${S.plans.map(x => `<button class="pl-chip ${x.id === d.id ? "on" : ""}" data-load="${x.id}">${esc(x.name)}</button>`).join("")}</div>` : ""}
+      <div class="pl-card">
+        ${UI.seg("pgoal", GOALS, d.goal.type)}
+        ${d.goal.type === "free" ? `<div class="pl-goal free"><span>Sin meta · frenás vos</span></div>` : `<button class="pl-goal" data-ed="goal"><b class="num">${gval(d.goal)}</b><span>${d.goal.type === "time" ? "min" : d.goal.type}</span></button>`}
+      </div>
+      <div class="group pl-group">
+        <button class="row" data-ed="base"><span class="ri">${icon("gauge", 18)}</span><span class="rl">Velocidad</span><span class="rv">${dec1(d.base)} km/h</span>${icon("chevR", 18, "chev")}</button>
+        ${cont ? "" : `<button class="row" data-ed="warm"><span class="ri">${icon("flame", 18)}</span><span class="rl">Arranque suave<small class="rs">2 km/h y sube en 10 s</small></span><span class="tog ${d.warm ? "on" : ""}"><i></i></span></button>`}
+        <div class="row">${UI.seg("pmode", [{ v: "flat", label: "PLANO" }, { v: "inc", label: "INCLINADA" }], d.mode, "mode")}</div>
+      </div>
+      <div class="pl-sec">Cambios de ritmo</div>
+      <div class="pl-steps">
+        ${d.steps.map((st, i) => `<button class="pl-step" data-step="${i}"><span class="at num">${st.at}<small>min</small></span>${icon("chevR", 14, "arr")}<span class="sp num">${dec1(st.speed)}<small>km/h</small></span>${st.mode ? `<i class="md ${st.mode}">${st.mode === "inc" ? "INCLINADA" : "PLANO"}</i>` : ""}</button>`).join("")}
+        <button class="pl-add" data-step="new">${icon("plus", 18)}${d.steps.length ? "Otro cambio" : "Agregar cambio"}</button>
+      </div>
+      <div class="pl-prev">
+        ${planSvg(sim)}
+        <div class="pl-est"><span>${icon("clock", 14, "c-time")}<b class="num">${C.fmtTime(sim.sec)}</b></span><span>${icon("route", 14, "c-dist")}<b class="num">${dec1(sim.km)}</b>km</span><span>${icon("flame", 14, "c-k")}<b class="num">${int(sim.kc)}</b>kcal</span></div>
+      </div>
+      <button class="btn btn-primary" data-go>${icon("play", 16)}${cont ? "Seguir" : "Empezar"}</button>
+      <div class="pl-foot"><button class="btn btn-soft" data-save>${d.id ? "Guardar cambios" : "Guardar plan"}</button>${d.id ? `<button class="icon-btn del" data-del aria-label="Eliminar plan">${icon("trash", 18)}</button>` : ""}</div>`;
+  };
+  body.onclick = async e => {
+    const sb = e.target.closest("[data-seg] button");
+    if (sb) {
+      const n = sb.parentElement.dataset.seg, v = sb.dataset.v;
+      haptic(6);
+      if (n === "pgoal" && v !== d.goal.type) d.goal = { type: v, value: GOAL_DEF[v] };
+      if (n === "pmode") d.mode = v;
+      UI.setSeg(sb.parentElement, v);
+      setTimeout(draw, 200);
+      return;
+    }
+    const ld = e.target.closest("[data-load]");
+    if (ld) { const x = S.plans.find(q => q.id === ld.dataset.load); d = x ? JSON.parse(JSON.stringify(x)) : fresh(); haptic(6); return draw(); }
+    const ed = e.target.closest("[data-ed]");
+    if (ed) {
+      const f = ed.dataset.ed, g = d.goal;
+      if (f === "warm") { d.warm = !d.warm; haptic(6); return draw(); }
+      if (f === "base") return UI.pick({ title: "Velocidad", sep: ",", unit: "km/h", columns: speedCols(d.base), onDone: v => { d.base = speedOf(v); draw(); } });
+      if (g.type === "time") return UI.pick({ title: "Duración", unit: "min", columns: [{ values: UI.range(5, 180, 5), value: Math.round(g.value / 5) * 5 }], onDone: ([v]) => { g.value = v; draw(); } });
+      if (g.type === "kcal") return UI.pick({ title: "Calorías", unit: "kcal", columns: [{ values: UI.range(50, 1500, 25), value: Math.round(g.value / 25) * 25, format: int, width: "120px" }], onDone: ([v]) => { g.value = v; draw(); } });
+      return UI.pick({ title: "Distancia", sep: ",", unit: "km", columns: [{ values: UI.range(0, 20), value: Math.floor(g.value), width: "70px" }, { values: UI.range(0, 9), value: Math.round(g.value * 10) % 10, width: "60px" }], onDone: ([x, y]) => { g.value = Math.max(0.5, x + y / 10); draw(); } });
+    }
+    const sp = e.target.closest("[data-step]");
+    if (sp) {
+      const i = sp.dataset.step;
+      if (i === "new") {
+        const last = d.steps[d.steps.length - 1];
+        return stepSheet({ at: last ? last.at + 5 : 5, speed: Math.min(12, (last ? last.speed : d.base) + 0.5), mode: null }, false, v => { d.steps.push(v); draw(); });
+      }
+      return stepSheet(d.steps[+i], true, v => { d.steps[+i] = v; draw(); }, () => { d.steps.splice(+i, 1); draw(); });
+    }
+    if (e.target.closest("[data-go]")) {
+      haptic(15);
+      const plan = { ...JSON.parse(JSON.stringify(d)), name: d.name || suggestName(d) };
+      s.close();
+      if (cont) continueWith(plan); else startFlow(plan);
+      return;
+    }
+    if (e.target.closest("[data-save]")) return nameSheet(d.name || suggestName(d), name => {
+      d.name = name;
+      const k = d.id ? S.plans.findIndex(q => q.id === d.id) : -1;
+      if (k >= 0) S.plans[k] = JSON.parse(JSON.stringify(d));
+      else { d.id = uid(); S.plans.unshift(JSON.parse(JSON.stringify(d))); }
+      save.plans(); haptic(12); UI.toast("Plan guardado"); draw();
+    }, { title: "Nombre del plan", ph: "Ej: Quema 45" });
+    if (e.target.closest("[data-del]")) {
+      if (!(await UI.confirm({ title: `¿Eliminar "${d.name}"?`, ok: "Eliminar", danger: true }))) return;
+      S.plans = S.plans.filter(q => q.id !== d.id); save.plans(); d = fresh(); draw();
+    }
+  };
+  draw();
+  const s = UI.sheet(body);
+}
+
+// Un cambio de ritmo: minuto + velocidad (ruedas) + PLANO / INCLINADA opcional.
+function stepSheet(st, editing, done, del) {
+  const [c1, c2] = speedCols(st.speed);
+  const wm = UI.wheel({ values: UI.range(1, 180), index: Math.max(0, Math.min(179, st.at - 1)), width: "64px" });
+  const wa = UI.wheel({ values: c1.values, index: c1.values.indexOf(c1.value), width: "56px" });
+  const wb = UI.wheel({ values: c2.values, index: c2.values.indexOf(c2.value), width: "48px" });
+  let mode = st.mode || "same";
+  const body = document.createElement("div");
+  body.className = "sheet-body";
+  body.innerHTML = `<h3 class="sheet-title">${editing ? "Editar cambio" : "Nuevo cambio"}</h3>
+    <div class="wheels st-wheels"><div class="wheel-band"></div><i class="slot"></i><div class="wheel-unit">min</div><i class="slot"></i><div class="wheel-sep">,</div><i class="slot"></i><div class="wheel-unit">km/h</div></div>
+    ${UI.seg("smode", [{ v: "same", label: "Igual" }, { v: "flat", label: "PLANO" }, { v: "inc", label: "INCLINADA" }], mode, "mode3")}
+    <button class="btn btn-primary" data-ok>Listo</button>
+    ${editing ? `<button class="btn btn-ghost" data-rm style="color:var(--danger)">${icon("trash", 18)}Eliminar cambio</button>` : ""}`;
+  const slots = body.querySelectorAll(".slot");
+  [wm, wa, wb].forEach((w, i) => slots[i].replaceWith(w.el));
+  body.querySelector('[data-seg="smode"]').onclick = e => { const b = e.target.closest("button"); if (!b) return; mode = b.dataset.v; haptic(6); UI.setSeg(b.parentElement, mode); };
+  const s = UI.sheet(body);
+  requestAnimationFrame(() => [wm, wa, wb].forEach(w => w.mount()));
+  body.querySelector("[data-ok]").onclick = () => { haptic(10); done({ at: wm.value, speed: speedOf([wa.value, wb.value]), mode: mode === "same" ? null : mode }); s.close(); };
+  if (editing) body.querySelector("[data-rm]").onclick = () => { del(); s.close(); };
+}
+
+// Motor del plan: corre en cada tick. Manda velocidad solo cuando cambia de fase (lo manual se respeta hasta el próximo cambio).
+let planBusy = false;
+function runPlan(L) {
+  const pr = L.prog;
+  if (!pr || pr.done || L.state !== "running" || !ble.connected) return;
+  const pg = planProgress(L);
+  if (pg && pg.pct >= 1) { pr.done = true; return goalReached(); }
+  const tg = planTarget(pr, (L.run || 0) - pr.t0);
+  if (tg.key === pr.key || planBusy) return;
+  const prev = pr.key;
+  pr.key = tg.key;
+  planBusy = true;
+  ble.setSpeed(tg.speed).catch(controlFailed).finally(() => { planBusy = false; });
+  targetSpeed = tg.speed; targetAt = Date.now();
+  const modeCh = tg.mode && tg.mode !== L.mode;
+  if (modeCh) { L.mode = tg.mode; UI.setSeg($('[data-seg="lmode"]'), L.mode); }
+  save.live();
+  if (prev == null) return;
+  let msg = tg.key[0] === "s" ? `${tg.speed >= (ble.liveSpeed() || 0) ? "▲" : "▼"} ${dec1(tg.speed)} km/h` : tg.key === "b" && prev[0] === "r" ? `A ritmo · ${dec1(tg.speed)} km/h` : "";
+  if (modeCh) msg = `${icon(L.mode === "inc" ? "mountain" : "flat", 20)}${L.mode === "inc" ? "Subí las patitas" : "Bajá las patitas"}<small>${msg}</small>`;
+  if (msg) cue(msg, modeCh);
+}
+function cue(html, hot) {
+  const c = $("#L-cue");
+  c.innerHTML = html;
+  c.className = "cue on" + (hot ? " hot" : "");
+  haptic(hot ? [40, 60, 40, 60, 40] : [30, 50, 30]);
+  clearTimeout(cue.t);
+  cue.t = setTimeout(() => { c.className = "cue" + (hot ? " hot" : ""); }, 3800);
+}
+
+// Meta cumplida: frena la cinta y ofrece terminar, seguir libre u otro plan.
+function goalReached() {
+  const L = S.live; if (!L) return;
+  L.resumeSpd = ble.liveSpeed() || L.lastSpd || L.prog.base;
+  L.state = "paused"; L.pauseZero = false;
+  (L.hits = L.hits || []).push({ name: L.prog.name, goal: L.prog.goal });
+  stopBelt();
+  save.live(); updateLive();
+  haptic([60, 80, 60, 80, 160]);
+  goalSheet();
+}
+function goalSheet() {
+  const L = S.live; if (!L) return;
+  const p = byId(L.profileId), t = C.totals(L.segs);
+  const s = UI.sheet(`<div class="sheet-body goal-hit">
+    <div class="gh-badge">${icon("trophy", 34)}</div>
+    <h3 class="sheet-title">¡Meta cumplida!</h3>
+    <p class="gh-sub">${esc(L.prog.name)} · ${fmtGoal(L.prog.goal)}</p>
+    <div class="gh-stats"><div><b class="num">${C.fmtTime(t.sec)}</b><span>tiempo</span></div><div><b class="num">${dec2(liveKm(L, t))}</b><span>km</span></div><div><b class="num">${int(isNet(p) ? t.net : t.gross)}</b><span>${kcalWord(p)}</span></div></div>
+    <button class="btn btn-primary" data-a="end">${icon("check", 20)}Terminar y guardar</button>
+    <div class="gh-more"><button class="btn btn-soft" data-a="free">${icon("play", 14)}Seguir libre</button><button class="btn btn-soft" data-a="plan">${icon("sliders", 18)}Otro plan</button></div>
+  </div>`);
+  s.el.addEventListener("click", e => {
+    const b = e.target.closest("[data-a]"); if (!b) return;
+    haptic(12); s.close();
+    const a = b.dataset.a;
+    if (a === "end") finishLive();
+    if (a === "free") continueWith(null);
+    if (a === "plan") setTimeout(() => planner({ cont: true }), 250);
+  });
+}
+async function continueWith(plan) {
+  const L = S.live; if (!L) return;
+  const spd = L.resumeSpd;
+  if (plan) { attachPlan(L, plan, true); UI.setSeg($('[data-seg="lmode"]'), L.mode); }
+  else L.prog = null;
+  await resumeWithCountdown();
+  if (!plan && S.live && spd && ble.connected) ble.setSpeed(spd).catch(controlFailed);
 }
 
 // ================= sesión en vivo =================
@@ -558,6 +837,7 @@ let targetSpeed = null, targetAt = 0;
 function buildLive() {
   $("#live").innerHTML = `
     <div class="live-in">
+      <div class="cue" id="L-cue"></div>
       <div class="live-top">
         <button class="icon-btn" data-act="live-min" aria-label="Minimizar">${icon("chevL", 20)}</button>
         <span class="chip" id="L-chip"><i class="dot"></i><span>Conectada</span></span>
@@ -565,6 +845,12 @@ function buildLive() {
       </div>
 
       <div class="live-time"><div class="lbl">TIEMPO</div><b class="num" id="L-time">0:00</b><span class="state-tag" id="L-state">Listo</span></div>
+
+      <div class="lplan" id="L-plan" hidden>
+        <div class="lp-row"><span class="lp-name" id="L-pname"></span><span class="lp-val num" id="L-pval"></span></div>
+        <div class="lp-bar"><i id="L-pfill"></i><span id="L-pmarks"></span></div>
+        <div class="lp-next" id="L-pnext"></div>
+      </div>
 
       <div class="live-mid">
         <div class="ring-box live-ring">${UI.ring({ pct: 0, size: 150, stroke: 13 })}
@@ -622,6 +908,9 @@ function buildLive() {
     const base = targetSpeed != null && Date.now() - targetAt < 3000 ? targetSpeed : ble.liveSpeed() || 1;
     const t = Math.max(1, Math.min(12, Math.round((base + +b.dataset.d) * 10) / 10));
     targetSpeed = t; targetAt = Date.now();
+    const L = S.live, pr = L.prog;
+    if (pr && pr.warm && (L.run || 0) - pr.t0 < 10) { pr.warm = false; pr.key = planTarget(pr, (L.run || 0) - pr.t0).key; } // tocó durante el arranque suave
+    S.settings.lastSpeed = t; save.settings();
     updateLive();
     ble.setSpeed(t).catch(controlFailed);
   };
@@ -692,6 +981,23 @@ function updateLive() {
   chip.className = "chip " + (ble.connected ? "ok" : "warn");
   chip.lastElementChild.textContent = ble.connected ? ble.name : "Reconectando…";
 
+  const pr = L.prog, pl = $("#L-plan");
+  pl.hidden = !pr;
+  live.classList.toggle("has-plan", !!pr);
+  if (pr) {
+    const pg = planProgress(L), pt = Math.max(0, (L.run || 0) - pr.t0), g = pr.goal;
+    $("#L-pname").innerHTML = `${icon(pr.quick ? "bolt" : "sliders", 14)}<span>${esc(pr.name)}</span>`;
+    $("#L-pval").textContent = pr.done ? "¡Meta cumplida!" : !pg ? C.fmtTime(pt)
+      : g.type === "time" ? `${C.fmtTime(pt)} / ${C.fmtTime(g.value * 60)}` : g.type === "km" ? `${dec2(pg.cur)} / ${dec1(g.value)} km` : `${int(pg.cur)} / ${int(g.value)} kcal`;
+    $("#L-pfill").style.width = (pr.done ? 100 : pg ? pg.pct * 100 : 0) + "%";
+    pl.classList.toggle("done", !!pr.done);
+    pl.classList.toggle("nogoal", !pg && !pr.done);
+    const marks = g && g.type === "time" ? pr.steps.filter(s => s.at < g.value).map(s => `<b style="left:${(s.at / g.value * 100).toFixed(2)}%"></b>`).join("") : "";
+    if (pl.dataset.m !== marks) { pl.dataset.m = marks; $("#L-pmarks").innerHTML = marks; }
+    const nx = pr.done ? null : planNext(pr, pt);
+    $("#L-pnext").innerHTML = nx ? `<span>${pr.warm && pt < 10 ? "Calentando" : "Próximo"}</span><b class="num">${dec1(nx.speed)} km/h</b>${nx.mode ? `<i class="md ${nx.mode}">${nx.mode === "inc" ? "INCLINADA" : "PLANO"}</i>` : ""}<em class="num">en ${C.fmtTime(nx.in)}</em>` : "";
+  }
+
   const showTarget = targetSpeed != null && Date.now() - targetAt < 3000;
   const tg = $("#L-target");
   tg.classList.toggle("pending", showTarget);
@@ -715,6 +1021,7 @@ async function resumeWithCountdown() {
   ble.start().catch(controlFailed);
   await countdown();
   if (S.live && S.live.state === "countdown") { S.live.state = "running"; save.live(); }
+  if (S.live && S.live.prog) S.live.prog.key = null;   // al seguir, el plan vuelve a mandar su velocidad
   updateLive();
 }
 
@@ -725,7 +1032,7 @@ function controlFailed() {
 }
 
 // Empezar: conecta (si hace falta), arranca la cinta y cuenta 3-2-1 junto con ella.
-async function startFlow() {
+async function startFlow(plan) {
   const p = me();
   if (!p) return;
   if (S.live) return showLive();
@@ -734,6 +1041,7 @@ async function startFlow() {
     if (!ok) return;
   }
   createLive(p, "countdown");
+  if (plan) attachPlan(S.live, plan);
   ble.start().catch(controlFailed);   // sin demoras: la cinta empieza su cuenta ya
   showLive();
   await countdown();
@@ -742,7 +1050,7 @@ async function startFlow() {
 }
 function createLive(p, state) {
   controlWarned = false;
-  S.live = { id: uid(), profileId: p.id, start: Date.now(), mode: S.settings.lastMode || "flat", state, kg: p.weight, segs: [], samples: [], acc: 0 };
+  S.live = { id: uid(), profileId: p.id, start: Date.now(), mode: S.settings.lastMode || "flat", state, kg: p.weight, segs: [], samples: [], acc: 0, run: 0 };
   save.live();
 }
 
@@ -801,6 +1109,9 @@ async function finishLive() {
   hideLive();
   if (t.sec < 20) { UI.toast("Fue muy corta, no se guardó"); return; }
   const s = { id: L.id, profileId: L.profileId, start: L.start, end: Date.now(), source: "ble", kg: L.kg, pct: S.settings.pct, segs: L.segs, samples: L.samples, ...t };
+  const names = [...new Set(L.planNames || [])];
+  if (names.length) s.planName = names.join(" + ");
+  if (L.hits && L.hits.length) s.hits = L.hits;
   S.sessions.unshift(s); save.sessions();
   render();
   setTimeout(() => openSession(s, true), 350);
@@ -825,7 +1136,9 @@ function tick() {
     C.addToSegments(L.segs, spd, gradeOf(L.mode), dt, L.kg);
     L.acc += dt;
     while (L.acc >= 5) { L.acc -= 5; L.samples.push(spd); }
+    L.run = (L.run || 0) + dt;
   }
+  runPlan(L);
   if (now - lastSave > 4000) { save.live(); lastSave = now; }
   updateLive();
 }
@@ -931,7 +1244,8 @@ document.addEventListener("click", e => {
   if (!el) return;
   const a = el.dataset.act;
   const acts = {
-    "start": startFlow,
+    "start": () => startFlow(S.live ? null : quickPlan()),
+    "plan": () => planner(),
     "new-profile": newProfile,
     "switch": switchSheet,
     "device": deviceSheet,
@@ -968,7 +1282,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.4";
+const VERSION = "1.5";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
