@@ -628,9 +628,9 @@ function buildLive() {
   $("#L-pause").onclick = () => {
     const L = S.live; if (!L) return;
     haptic(15);
-    if (L.state === "running") { L.state = "paused"; ble.pause().catch(controlFailed); }
-    else { L.state = "running"; ble.start().catch(controlFailed); }
-    save.live(); updateLive();
+    if (L.state === "countdown") return;               // ya está arrancando
+    if (L.state === "running") { L.state = "paused"; L.pauseZero = false; ble.pause().catch(controlFailed); save.live(); updateLive(); return; }
+    resumeWithCountdown();
   };
   // mantener apretado para terminar
   const stop = $("#L-stop");
@@ -686,7 +686,7 @@ function updateLive() {
   $("#L-rate").style.color = moving && pct >= .65 ? "#FF7A5C" : "";
   UI.setRing($("#live .ring"), (weekKcal(p) + kc) / (p.goal || 2000));
 
-  const stateTxt = L.state === "paused" ? "En pausa" : !ble.connected ? "Reconectando" : spd > 0 ? "En marcha" : "Esperando la cinta";
+  const stateTxt = L.state === "paused" ? "En pausa" : L.state === "countdown" ? "Arrancando" : !ble.connected ? "Reconectando" : spd > 0 ? "En marcha" : "Esperando la cinta";
   $("#L-state").textContent = stateTxt;
   const chip = $("#L-chip");
   chip.className = "chip " + (ble.connected ? "ok" : "warn");
@@ -698,14 +698,25 @@ function updateLive() {
   tg.firstElementChild.textContent = dec1(showTarget ? targetSpeed : spd);
   $$("#L-ctl button").forEach(b => b.disabled = L.state !== "running" || !ble.connected);
 
-  $("#L-pause").className = "round " + (L.state === "running" ? "pause" : "resume");
-  $("#L-pause").innerHTML = icon(L.state === "running" ? "pause" : "play", 28);
-  $("#L-plbl").textContent = L.state === "running" ? "Pausa" : "Seguir";
+  const act = L.state !== "paused";               // corriendo o arrancando → muestra "Pausa"
+  $("#L-pause").className = "round " + (act ? "pause" : "resume");
+  $("#L-pause").innerHTML = icon(act ? "pause" : "play", 28);
+  $("#L-plbl").textContent = act ? "Pausa" : "Seguir";
 }
 
 // Distancia: se usa el contador de la propia cinta (así coincide con su pantalla).
 // Si la cinta no la manda, se calcula con velocidad × tiempo.
 const liveKm = (L, t) => L.prevDist != null ? (L.cKm || 0) : t.km;
+
+// Seguir: la cinta hace su propia cuenta 3-2-1, así que la app la acompaña.
+async function resumeWithCountdown() {
+  const L = S.live; if (!L) return;
+  L.state = "countdown"; save.live(); updateLive();
+  ble.start().catch(controlFailed);
+  await countdown();
+  if (S.live && S.live.state === "countdown") { S.live.state = "running"; save.live(); }
+  updateLive();
+}
 
 function controlFailed() {
   if (controlWarned) return;
@@ -840,8 +851,12 @@ ble.addEventListener("data", e => {
     createLive(me(), "running");
     showLive();
     UI.toast("Caminata iniciada desde la cinta");
-  } else if (S.live && S.live.state === "countdown" && e.detail.speed > 0) {
+  } else if (S.live && S.live.state === "countdown" && speed > 0) {
     S.live.state = "running";
+  } else if (S.live && S.live.state === "paused") {
+    // tras pausar, la cinta frena despacio: recién cuando estuvo quieta 2 s, un arranque cuenta como "seguir"
+    if (speed === 0 && zeroSince && Date.now() - zeroSince > 2000) S.live.pauseZero = true;
+    if (speed > 0 && S.live.pauseZero) { S.live.state = "running"; save.live(); UI.toast("Seguimos"); updateLive(); }
   }
 });
 ble.addEventListener("state", refreshDevice);
@@ -935,7 +950,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.2";
+const VERSION = "1.3";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
