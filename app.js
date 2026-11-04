@@ -572,7 +572,7 @@ function openSession(s, fresh = false) {
 const GOALS = [{ v: "time", label: "Tiempo" }, { v: "kcal", label: "Kcal" }, { v: "km", label: "Km" }, { v: "free", label: "Libre" }];
 const GOAL_DEF = { time: 30, kcal: 300, km: 3, free: 0 };
 const quickPlan = () => ({ name: "Rápida", quick: true, goal: { type: "time", value: S.settings.quickMin || 30 }, base: S.settings.lastSpeed || 5, mode: S.settings.lastMode || "flat", warm: true, steps: [] });
-const fmtGoal = g => !g || g.type === "free" ? "Libre" : g.type === "time" ? `${g.value} min` : g.type === "km" ? `${dec1(g.value)} km` : `${int(g.value)} kcal`;
+const fmtGoal = g => !g || g.type === "free" ? "Libre" : g.type === "time" ? `${Math.max(1, Math.round(g.value))} min` : g.type === "km" ? `${dec1(g.value)} km` : `${int(g.value)} kcal`;
 const suggestName = d => `${d.goal.type === "free" ? "Libre" : fmtGoal(d.goal)} a ${dec1(d.base)}`;
 const speedCols = v => [{ values: UI.range(1, 12), value: Math.min(12, Math.max(1, Math.floor(v + 1e-6))), width: "70px" }, { values: UI.range(0, 9), value: Math.round(v * 10) % 10, width: "60px" }];
 const speedOf = ([x, y]) => Math.min(12, Math.round((x + y / 10) * 10) / 10);
@@ -1282,7 +1282,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.5";
+const VERSION = "1.5.1";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
