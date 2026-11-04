@@ -690,3 +690,17 @@ input[type="datetime-local"].field { font-size: 15px; color-scheme: dark; }
 .act-t b { font-size: 18px; font-weight: 800; }
 .act-t small { color: rgba(255, 255, 255, .7); font-size: 10px; letter-spacing: .12em; }
 .hold-fill { background: rgba(0, 0, 0, .2); }
+/* velocidad: una fila, minimalista */
+.spd { display: grid; grid-template-columns: 1fr 1fr 1.5fr 1fr 1fr; gap: 6px; align-items: center; padding: 0; background: none; border: 0; border-radius: 0; }
+.spd button { height: 56px; border-radius: 18px; gap: 1px; font-size: 16px; font-weight: 700; color: var(--t1); background: rgba(255, 255, 255, .045); border: 0; box-shadow: none; }
+.spd button.x5 { background: rgba(255, 255, 255, .08); font-weight: 800; }
+.spd button i { font-size: 16px; font-weight: 500; opacity: .5; }
+.spd button.up, .spd button.up.x5 { color: var(--t1); background: rgba(255, 255, 255, .045); border: 0; }
+.spd button:active { transform: scale(.92); background: rgba(255, 255, 255, .14); }
+.spd .sv b { font-size: 46px; margin: 0; }
+.spd .sv > span:last-child { font-size: 11px; color: var(--t3); letter-spacing: .1em; text-transform: uppercase; }
+.spd { gap: 8px; margin-top: 4px; }
+.spd button, .spd button.up, .spd button.up.x5 { height: 64px; font-size: 18px; background: rgba(255, 255, 255, .07); }
+.spd button.x5, .spd button.up.x5 { background: rgba(255, 255, 255, .12); }
+.spd button i { font-size: 18px; opacity: .55; }
+.spd .sv b { font-size: 50px; }

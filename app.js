@@ -876,9 +876,11 @@ function buildLive() {
       ${UI.seg("lmode", [{ v: "flat", label: "PLANO" }, { v: "inc", label: "INCLINADA" }], "flat", "big mode")}
 
       <div class="spd" id="L-ctl">
-        <div class="spd-col"><button class="dn x5" data-d="-0.5"><i>−</i>0,5</button><button class="dn" data-d="-0.1"><i>−</i>0,1</button></div>
-        <div class="sv" id="L-target"><span class="lbl">Velocidad</span><b class="num">0,0</b><span>km/h</span></div>
-        <div class="spd-col"><button class="up x5" data-d="0.5"><i>+</i>0,5</button><button class="up" data-d="0.1"><i>+</i>0,1</button></div>
+        <button class="x5" data-d="-0.5"><i>−</i>0,5</button>
+        <button data-d="-0.1"><i>−</i>0,1</button>
+        <div class="sv" id="L-target"><b class="num">0,0</b><span>km/h</span></div>
+        <button data-d="0.1"><i>+</i>0,1</button>
+        <button class="x5" data-d="0.5"><i>+</i>0,5</button>
       </div>
 
       <div class="live-actions">
@@ -1277,7 +1279,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.6.1";
+const VERSION = "1.6.2";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
