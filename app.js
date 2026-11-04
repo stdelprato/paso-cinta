@@ -815,8 +815,9 @@ async function discardLive() {
 let lastTick = Date.now(), lastSave = 0;
 function tick() {
   const now = Date.now();
-  const dt = Math.min((now - lastTick) / 1000, 5);
+  let dt = (now - lastTick) / 1000;
   lastTick = now;
+  if (dt > 3) dt = 0;   // la página estuvo congelada: el hueco lo recupera el contador de la cinta
   const L = S.live;
   if (!L) return;
   const spd = ble.liveSpeed();
@@ -839,12 +840,29 @@ ble.addEventListener("data", e => {
 
   const L = S.live;
   if (L && dist != null) {
+    const now = Date.now();
+    const gap = L.lastDataAt ? (now - L.lastDataAt) / 1000 : 0;
     if (L.prevDist != null) {
       let d = dist - L.prevDist;
       if (d < 0) d = dist;                          // la cinta reinició su contador
       if (L.state !== "paused" && d > 0 && d < 300) L.cKm = (L.cKm || 0) + d / 1000;
+      // Celu bloqueado: la página se congeló pero la cinta siguió contando.
+      // Se recupera el hueco con la distancia que hizo y la última velocidad conocida.
+      else if (L.state === "running" && gap > 8 && d >= 300 && d < 50000) {
+        const km = d / 1000;
+        const v = L.lastSpd > 0.5 ? L.lastSpd : speed > 0.5 ? speed : 4;
+        const sec = Math.min(gap, km / v * 3600);
+        C.addToSegments(L.segs, v, gradeOf(L.mode), sec, L.kg);
+        L.cKm = (L.cKm || 0) + km;
+        L.run = (L.run || 0) + sec;
+        for (let a = (L.acc || 0) + sec; a >= 5; a -= 5) L.samples.push(v);
+        save.live();
+        setTimeout(() => UI.toast(`Recuperado: ${C.fmtTime(sec)} con el celu bloqueado`), 400);
+      }
     }
     L.prevDist = dist;
+    L.lastDataAt = now;
+    if (speed > 0) L.lastSpd = speed;
   }
 
   if (!S.live && speed > 0 && autoArmed && me()) {
@@ -950,7 +968,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.3";
+const VERSION = "1.4";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
