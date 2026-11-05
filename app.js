@@ -1055,7 +1055,7 @@ function buildLive() {
       <div class="cue" id="L-cue"></div>
       <div class="live-top">
         <button class="icon-btn" data-act="live-min" aria-label="Minimizar">${icon("chevL", 20)}</button>
-        <span class="chip" id="L-chip"><i class="dot"></i><span>Conectada</span></span>
+        <span class="lt-mid"><span class="chip" id="L-chip"><i class="dot"></i><span>Conectada</span></span><button class="rot-btn" data-act="live-rot" aria-label="Girar pantalla">${icon("rotate", 15)}</button></span>
         <button class="icon-btn" data-act="live-discard" aria-label="Descartar">${icon("x", 20)}</button>
       </div>
 
@@ -1144,10 +1144,49 @@ function showLive() {
   UI.setSeg($('[data-seg="lmode"]'), L.mode);
   $("#live").classList.add("on");
   document.body.style.overflow = "hidden";
+  enterLand();
   keepAwake();
   updateLive();
 }
-function hideLive() { $("#live").classList.remove("on"); document.body.style.overflow = ""; render(); }
+function hideLive() { $("#live").classList.remove("on"); document.body.style.overflow = ""; exitLand(); render(); }
+
+// Horizontal en vivo: fuerza la rotación (anda aunque Android tenga el giro bloqueado).
+// Si el navegador no deja, rota la pantalla con CSS. Un botón chico vuelve a vertical.
+let orientLocked = false, fsByUs = false;
+const landOn = () => S.settings.land !== false;
+async function enterLand() {
+  applyOrient();
+  const so = screen.orientation;
+  if (!landOn() || !so || !so.lock || orientLocked) return;
+  try { await so.lock("landscape"); orientLocked = true; }
+  catch (e) {
+    try {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen && (!navigator.userActivation || navigator.userActivation.isActive)) {
+        await document.documentElement.requestFullscreen({ navigationUI: "hide" }); fsByUs = true;
+        await so.lock("landscape"); orientLocked = true;
+      }
+    } catch (e2) {}
+  }
+  applyOrient();
+}
+function exitLand() {
+  if (orientLocked) { try { screen.orientation.unlock(); } catch (e) {} orientLocked = false; }
+  if (fsByUs && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  fsByUs = false;
+  applyOrient();
+}
+function applyOrient() {
+  const on = !!S.live && $("#live").classList.contains("on") && landOn();
+  const h = document.documentElement;
+  h.classList.toggle("land", on);
+  h.classList.toggle("rot", on && innerHeight > innerWidth);
+}
+addEventListener("resize", applyOrient);
+document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement) { fsByUs = false; orientLocked = false; } applyOrient(); });
+function toggleLand() {
+  S.settings.land = !landOn(); save.settings(); haptic(10);
+  if (landOn()) enterLand(); else exitLand();
+}
 
 function updateLive() {
   const L = S.live;
@@ -1477,6 +1516,7 @@ document.addEventListener("click", e => {
     "weigh": () => PICK.weight(me(), ch => { logWeight(me(), ch.weight); me().weight = ch.weight; save.profiles(); render(); UI.toast("Peso guardado"); }),
     "weigh-later": () => { me().weightSnooze = Date.now() + 864e5; save.profiles(); render(); },
     "live-min": hideLive,
+    "live-rot": toggleLand,
     "live-discard": discardLive
   };
   acts[a] && acts[a]();
@@ -1496,7 +1536,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.7.1";
+const VERSION = "1.8";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
