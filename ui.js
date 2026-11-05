@@ -35,6 +35,9 @@ const UI = (() => {
     users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-6 6.5-6s6.5 2.5 6.5 6"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20c0-3-2-5-4.5-5.7"/>',
     sliders: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/>',
     rotate: '<rect x="3" y="8" width="14" height="9" rx="2"/><path d="M13 3.5h2.5A4.5 4.5 0 0 1 20 8v2.5"/><path d="m18 8.5 2 2 2-2"/>',
+    star: '<path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.9z"/>',
+    up: '<path d="M12 19V5m-6 6 6-6 6 6"/>',
+    down: '<path d="M12 5v14m-6-6 6 6 6-6"/>',
     dice: '<rect x="4" y="4" width="16" height="16" rx="4"/><circle cx="9" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="15" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="1.3" fill="currentColor" stroke="none"/>',
     check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
     calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>',
@@ -89,11 +92,29 @@ const UI = (() => {
     // arrastrar hacia abajo para cerrar
     const grab = el.querySelector(".grab");
     let y0 = null, dy = 0;
+    const move = v => { el.style.transform = `translate(-50%, ${v}px)`; };
     grab.addEventListener("pointerdown", e => { y0 = e.clientY; dy = 0; el.style.transition = "none"; grab.setPointerCapture(e.pointerId); });
-    grab.addEventListener("pointermove", e => { if (y0 === null) return; dy = Math.max(0, e.clientY - y0); el.style.transform = `translateY(${dy}px)`; });
-    const end = () => { if (y0 === null) return; y0 = null; el.style.transition = ""; if (dy > 90) close(); else el.style.transform = ""; };
+    grab.addEventListener("pointermove", e => { if (y0 === null) return; dy = Math.max(0, e.clientY - y0); move(dy); });
+    const end = () => { if (y0 === null) return; y0 = null; el.style.transition = ""; if (dy > 70 || dy < 4) close(); else el.style.transform = ""; };
     grab.addEventListener("pointerup", end);
-    grab.addEventListener("pointercancel", end);
+    grab.addEventListener("pointercancel", () => { y0 = null; el.style.transition = ""; el.style.transform = ""; });
+    // también se baja arrastrando el contenido, si está arriba de todo
+    let ty = null, tdy = 0, drag = false;
+    el.addEventListener("touchstart", e => {
+      if (el.scrollTop > 0 || e.target.closest(".grab, .wheel, .wheels, input, textarea")) { ty = null; return; }
+      ty = e.touches[0].clientY; tdy = 0; drag = false;
+    }, { passive: true });
+    el.addEventListener("touchmove", e => {
+      if (ty === null) return;
+      tdy = e.touches[0].clientY - ty;
+      if (!drag && tdy > 10 && el.scrollTop <= 0) { drag = true; el.style.transition = "none"; }
+      if (drag) { e.preventDefault(); move(Math.max(0, tdy - 10)); }
+    }, { passive: false });
+    el.addEventListener("touchend", () => {
+      if (!drag) { ty = null; return; }
+      drag = false; ty = null; el.style.transition = "";
+      if (tdy > 110) close(); else el.style.transform = "";
+    });
     return { el, close };
   }
 

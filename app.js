@@ -132,11 +132,15 @@ function renderHome() {
       </button>
     </div>`;
 
-  const q = quickPlan();
+  const q = quickPlan(), mp = mainPlan();
   $("#cta").innerHTML = S.live
     ? `<button class="cta-go" data-act="start"><span class="play">${icon("play", 16)}</span>Volver a la caminata</button>`
+    : mp
+    ? `<button class="cta-go half" data-act="start"><span class="play">${icon("play", 14)}</span><span class="cta-t">Libre<small>${dec1(q.base)} km/h</small></span></button>
+       <button class="cta-go half pl" data-act="start-main"><span class="play">${icon("play", 14)}</span><span class="cta-t">${esc(mp.name)}<small>${fmtGoal(mp.goal)}</small></span></button>
+       <button class="cta-plan sm" data-act="plans" aria-label="Entrenamientos">${icon("sliders", 22)}</button>`
     : `<button class="cta-go" data-act="start"><span class="play">${icon("play", 16)}</span><span class="cta-t">Empezar<small>${fmtGoal(q.goal)} · ${dec1(q.base)} km/h · ${q.mode === "inc" ? "Inclinada" : "Plano"}</small></span></button>
-       <button class="cta-plan" data-act="plan" aria-label="Caminata a medida">${icon("sliders", 24)}</button>`;
+       <button class="cta-plan" data-act="plans" aria-label="Entrenamientos">${icon("sliders", 24)}</button>`;
 
   requestAnimationFrame(() => {
     const r = $("#s-home .ring");
@@ -862,40 +866,116 @@ function planSvg(sim) {
   return `<svg class="pl-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs>${grad("pgF", "#C6FF3D")}${grad("pgI", "#FF3D71")}</defs>${parts}</svg>`;
 }
 
-// Hoja "Caminata a medida": meta, velocidad, arranque suave, cambios de ritmo, vista previa y planes guardados.
-function planner({ cont = false, from = null } = {}) {
+// Principal del inicio: el fijado con la estrella; si no, el último que usaste.
+const mainPlan = () => S.plans.find(x => x.id === S.settings.mainPlan) || S.plans.slice().sort((x, y) => (y.used || 0) - (x.used || 0))[0] || null;
+function startPlan(x, cont = false) {
+  const k = S.plans.find(q => q.id === x.id);
+  if (k) { k.used = Date.now(); save.plans(); }
+  const plan = { ...JSON.parse(JSON.stringify(x)), warm: true, name: x.name || suggestName(x) };
+  if (cont) continueWith(plan); else startFlow(plan);
+}
+
+// Lista de entrenamientos guardados: empezar directo, editar, fijar el principal.
+function plansHub({ cont = false } = {}) {
+  if (!S.plans.length) return planner({ cont });
+  const p = cont && S.live ? byId(S.live.profileId) : me();
+  const body = document.createElement("div");
+  body.className = "sheet-body hub";
+  let s = null;
+  const draw = () => {
+    if (!S.plans.length) { s && s.close(); return; }
+    const mp = mainPlan();
+    body.innerHTML = `
+      <div class="sh-head"><h3 class="sheet-title">${cont ? "Seguir con" : "Entrenamientos"}</h3><button class="x-btn" data-close aria-label="Cerrar">${icon("x", 18)}</button></div>
+      <div class="hub-list">${S.plans.map(x => {
+        const sim = simulate(x, p.weight, isNet(p)), main = !cont && mp && mp.id === x.id;
+        return `<div class="hub-card ${main ? "main" : ""}">
+          <button class="hc-body" data-edit="${x.id}">
+            <span class="hc-name">${esc(x.name)}</span>
+            <span class="hc-meta"><b>${fmtGoal(x.goal)}</b>${[x.goal.type !== "time" ? C.fmtTime(sim.sec) : "", x.goal.type !== "km" ? dec1(sim.km) + " km" : "", x.goal.type !== "kcal" ? int(sim.kc) + " kcal" : ""].filter(Boolean).map(v => `<i></i>${v}`).join("")}</span>
+            ${planSvg(sim)}
+          </button>
+          <div class="hc-side">
+            <button class="hc-go" data-go="${x.id}" aria-label="Empezar">${icon("play", 20)}</button>
+            ${cont ? "" : `<button class="hc-star ${main ? "on" : ""}" data-star="${x.id}" aria-label="Principal">${icon("star", 16)}</button>`}
+          </div>
+        </div>`;
+      }).join("")}</div>
+      <button class="pl-add" data-new>${icon("plus", 18)}Nuevo entrenamiento</button>`;
+  };
+  const refresh = () => { draw(); if (!S.live) render(); };
+  body.onclick = e => {
+    const go = e.target.closest("[data-go]");
+    if (go) { haptic(15); const x = S.plans.find(q => q.id === go.dataset.go); s.close(); if (x) startPlan(x, cont); return; }
+    const st = e.target.closest("[data-star]");
+    if (st) {
+      haptic(10);
+      const pinned = S.settings.mainPlan === st.dataset.star;
+      S.settings.mainPlan = pinned ? null : st.dataset.star; save.settings();
+      if (!pinned) UI.toast("Queda en el inicio");
+      return refresh();
+    }
+    const ed = e.target.closest("[data-edit]");
+    if (ed) { haptic(6); return planner({ cont, from: S.plans.find(q => q.id === ed.dataset.edit), parent: s, onChange: refresh }); }
+    if (e.target.closest("[data-new]")) { haptic(6); return planner({ cont, parent: s, onChange: refresh }); }
+  };
+  draw();
+  s = UI.sheet(body);
+}
+
+// Editor de un entrenamiento: meta, velocidad, cambios de ritmo y vista previa.
+function planner({ cont = false, from = null, parent = null, onChange = null } = {}) {
   const p = cont && S.live ? byId(S.live.profileId) : me();
   const fresh = () => ({ name: "", goal: { type: "time", value: S.settings.quickMin || 30 }, base: S.settings.lastSpeed || 5, mode: S.settings.startMode || "inc", warm: true, steps: [] });
   let d = from ? JSON.parse(JSON.stringify(from)) : fresh();
+  d.warm = true;
   const gval = g => g.type === "time" ? `${g.value}` : g.type === "km" ? dec1(g.value) : int(g.value);
+  const mtag = m => m ? `<i class="md ${m}">${m === "inc" ? "INCLINADA" : "PLANO"}</i>` : "";
+  const changed = () => onChange ? onChange() : !S.live && render();
   const body = document.createElement("div");
   body.className = "sheet-body planner";
+  let drawn = false;
+  const persist = () => {   // los guardados se guardan solos al tocar algo
+    const k = S.plans.findIndex(q => q.id === d.id); if (k < 0) return;
+    S.plans[k] = { ...S.plans[k], ...JSON.parse(JSON.stringify(d)) }; save.plans(); changed();
+  };
   const draw = () => {
     d.steps.sort((x, y) => x.at - y.at);
+    if (d.id && drawn) persist();
+    drawn = true;
     const sim = simulate(d, p.weight, isNet(p));
+    let prev = d.base;
+    const rows = d.steps.map((st, i) => {
+      const dir = st.speed > prev ? "up" : st.speed < prev ? "down" : "eq"; prev = st.speed;
+      return `<div class="tl-row">
+        <button class="tl-main" data-step="${i}"><i class="tl-fill" style="width:calc((100% - 72px) * ${(st.speed / 12).toFixed(3)})"></i>
+          <span class="tl-at num">${st.at}<small>min</small></span>
+          <span class="tl-dir ${dir}">${dir === "eq" ? "" : icon(dir, 14)}</span>
+          <span class="tl-sp num">${dec1(st.speed)}<small>km/h</small></span>${mtag(st.mode)}
+        </button>
+        <button class="tl-del" data-rm="${i}" aria-label="Eliminar">${icon("x", 16)}</button>
+      </div>`;
+    }).join("");
     body.innerHTML = `
-      <h3 class="sheet-title">${cont ? "Seguir con un plan" : "Caminata a medida"}</h3>
-      ${S.plans.length ? `<div class="pl-saved">${d.id ? `<button class="pl-chip" data-load="">${icon("plus", 14)}Nuevo</button>` : ""}${S.plans.map(x => `<button class="pl-chip ${x.id === d.id ? "on" : ""}" data-load="${x.id}">${esc(x.name)}</button>`).join("")}</div>` : ""}
+      <div class="sh-head">${d.id ? `<button class="sheet-title sh-name" data-save>${esc(d.name)}${icon("edit", 15)}</button>` : `<h3 class="sheet-title">${cont ? "Seguir con un plan" : "Nuevo entrenamiento"}</h3>`}
+        ${d.id ? `<button class="x-btn del" data-del aria-label="Eliminar">${icon("trash", 17)}</button>` : ""}
+        <button class="x-btn" data-close aria-label="Cerrar">${icon("x", 18)}</button></div>
       <div class="pl-card">
         ${UI.seg("pgoal", GOALS, d.goal.type)}
         ${d.goal.type === "free" ? `<div class="pl-goal free"><span>Sin meta · frenás vos</span></div>` : `<button class="pl-goal" data-ed="goal"><b class="num">${gval(d.goal)}</b><span>${d.goal.type === "time" ? "min" : d.goal.type}</span></button>`}
       </div>
-      <div class="group pl-group">
-        <button class="row" data-ed="base"><span class="ri">${icon("gauge", 18)}</span><span class="rl">Velocidad</span><span class="rv">${dec1(d.base)} km/h</span>${icon("chevR", 18, "chev")}</button>
-        ${cont ? "" : `<button class="row" data-ed="warm"><span class="ri">${icon("flame", 18)}</span><span class="rl">Arranque suave<small class="rs">2 km/h y sube en 10 s</small></span><span class="tog ${d.warm ? "on" : ""}"><i></i></span></button>`}
-        <div class="row">${UI.seg("pmode", [{ v: "flat", label: "PLANO" }, { v: "inc", label: "INCLINADA" }], d.mode, "mode")}</div>
+      <div class="pl-base">
+        <button class="pl-spd" data-ed="base"><b class="num">${dec1(d.base)}</b><small>km/h</small></button>
+        ${UI.seg("pmode", [{ v: "flat", label: "PLANO" }, { v: "inc", label: "INCLINADA" }], d.mode, "mode")}
       </div>
-      <div class="pl-sec">Cambios de ritmo</div>
-      <div class="pl-steps">
-        ${d.steps.map((st, i) => `<button class="pl-step" data-step="${i}"><span class="at num">${st.at}<small>min</small></span>${icon("chevR", 14, "arr")}<span class="sp num">${dec1(st.speed)}<small>km/h</small></span>${st.mode ? `<i class="md ${st.mode}">${st.mode === "inc" ? "INCLINADA" : "PLANO"}</i>` : ""}</button>`).join("")}
-        <button class="pl-add" data-step="new">${icon("plus", 18)}${d.steps.length ? "Otro cambio" : "Agregar cambio"}</button>
-      </div>
+      <div class="pl-sec"><span>Cambios de ritmo</span>${d.steps.length ? `<button class="pl-addl" data-step="new">${icon("plus", 15)}Agregar</button>` : ""}</div>
+      ${d.steps.length ? `<div class="pl-tl"><div class="tl-row start"><div class="tl-main"><span class="tl-at num">0<small>min</small></span><span class="tl-dir"></span><span class="tl-sp num">${dec1(d.base)}<small>km/h</small></span>${mtag(d.mode)}</div></div>${rows}</div>`
+        : `<button class="pl-add" data-step="new">${icon("plus", 18)}Agregar cambio de ritmo</button>`}
       <div class="pl-prev">
         ${planSvg(sim)}
         <div class="pl-est"><span>${icon("clock", 14, "c-time")}<b class="num">${C.fmtTime(sim.sec)}</b></span><span>${icon("route", 14, "c-dist")}<b class="num">${dec1(sim.km)}</b>km</span><span>${icon("flame", 14, "c-k")}<b class="num">${int(sim.kc)}</b>kcal</span></div>
       </div>
-      <button class="btn btn-primary" data-go>${icon("play", 16)}${cont ? "Seguir" : "Empezar"}</button>
-      <div class="pl-foot"><button class="btn btn-soft" data-save>${d.id ? "Guardar cambios" : "Guardar plan"}</button>${d.id ? `<button class="icon-btn del" data-del aria-label="Eliminar plan">${icon("trash", 18)}</button>` : ""}</div>`;
+      <div class="pl-foot">${d.id ? "" : `<button class="btn btn-soft" data-save>Guardar</button>`}<button class="btn btn-primary grow" data-go>${icon("play", 16)}${cont ? "Seguir" : "Empezar"}</button></div>`;
   };
   body.onclick = async e => {
     const sb = e.target.closest("[data-seg] button");
@@ -908,12 +988,16 @@ function planner({ cont = false, from = null } = {}) {
       setTimeout(draw, 200);
       return;
     }
-    const ld = e.target.closest("[data-load]");
-    if (ld) { const x = S.plans.find(q => q.id === ld.dataset.load); d = x ? JSON.parse(JSON.stringify(x)) : fresh(); haptic(6); return draw(); }
+    const rm = e.target.closest("[data-rm]");
+    if (rm) {
+      haptic(10);
+      rm.closest(".tl-row").classList.add("out");
+      setTimeout(() => { d.steps.splice(+rm.dataset.rm, 1); draw(); }, 220);
+      return;
+    }
     const ed = e.target.closest("[data-ed]");
     if (ed) {
       const f = ed.dataset.ed, g = d.goal;
-      if (f === "warm") { d.warm = !d.warm; haptic(6); return draw(); }
       if (f === "base") return UI.pick({ title: "Velocidad", sep: ",", unit: "km/h", columns: speedCols(d.base), onDone: v => { d.base = speedOf(v); draw(); } });
       if (g.type === "time") return UI.pick({ title: "Duración", unit: "min", columns: [{ values: UI.range(5, 180, 5), value: Math.round(g.value / 5) * 5 }], onDone: ([v]) => { g.value = v; draw(); } });
       if (g.type === "kcal") return UI.pick({ title: "Calorías", unit: "kcal", columns: [{ values: UI.range(50, 1500, 25), value: Math.round(g.value / 25) * 25, format: int, width: "120px" }], onDone: ([v]) => { g.value = v; draw(); } });
@@ -931,20 +1015,22 @@ function planner({ cont = false, from = null } = {}) {
     if (e.target.closest("[data-go]")) {
       haptic(15);
       const plan = { ...JSON.parse(JSON.stringify(d)), name: d.name || suggestName(d) };
-      s.close();
-      if (cont) continueWith(plan); else startFlow(plan);
+      s.close(); if (parent) parent.close();
+      if (d.id) startPlan(plan, cont); else if (cont) continueWith(plan); else startFlow(plan);
       return;
     }
     if (e.target.closest("[data-save]")) return nameSheet(d.name || suggestName(d), name => {
       d.name = name;
       const k = d.id ? S.plans.findIndex(q => q.id === d.id) : -1;
-      if (k >= 0) S.plans[k] = JSON.parse(JSON.stringify(d));
+      if (k >= 0) S.plans[k] = { ...S.plans[k], ...JSON.parse(JSON.stringify(d)) };
       else { d.id = uid(); S.plans.unshift(JSON.parse(JSON.stringify(d))); }
-      save.plans(); haptic(12); UI.toast("Plan guardado"); draw();
-    }, { title: "Nombre del plan", ph: "Ej: Quema 45" });
+      save.plans(); haptic(12); UI.toast("Guardado"); drawn = false; draw(); changed();
+    }, { title: "Nombre", ph: "Ej: Quema 45" });
     if (e.target.closest("[data-del]")) {
       if (!(await UI.confirm({ title: `¿Eliminar "${d.name}"?`, ok: "Eliminar", danger: true }))) return;
-      S.plans = S.plans.filter(q => q.id !== d.id); save.plans(); d = fresh(); draw();
+      S.plans = S.plans.filter(q => q.id !== d.id); save.plans();
+      if (S.settings.mainPlan === d.id) { S.settings.mainPlan = null; save.settings(); }
+      s.close(); changed();
     }
   };
   draw();
@@ -960,8 +1046,9 @@ function stepSheet(st, editing, done, del) {
   let mode = st.mode || "same";
   const body = document.createElement("div");
   body.className = "sheet-body";
-  body.innerHTML = `<h3 class="sheet-title">${editing ? "Editar cambio" : "Nuevo cambio"}</h3>
-    <div class="wheels st-wheels"><div class="wheel-band"></div><i class="slot"></i><div class="wheel-unit">min</div><i class="slot"></i><div class="wheel-sep">,</div><i class="slot"></i><div class="wheel-unit">km/h</div></div>
+  body.innerHTML = `<h3 class="sheet-title">${editing ? "Editar cambio" : "Cambio de ritmo"}</h3>
+    <div class="st-lbls"><span>Minuto</span><span>Velocidad</span></div>
+    <div class="wheels st-wheels"><div class="wheel-band"></div><i class="slot"></i><div class="wheel-unit">min</div><i class="st-div"></i><i class="slot"></i><div class="wheel-sep">,</div><i class="slot"></i><div class="wheel-unit">km/h</div></div>
     ${UI.seg("smode", [{ v: "same", label: "Igual" }, { v: "flat", label: "PLANO" }, { v: "inc", label: "INCLINADA" }], mode, "mode3")}
     <button class="btn btn-primary" data-ok>Listo</button>
     ${editing ? `<button class="btn btn-ghost" data-rm style="color:var(--danger)">${icon("trash", 18)}Eliminar cambio</button>` : ""}`;
@@ -1033,7 +1120,7 @@ function goalSheet() {
     const a = b.dataset.a;
     if (a === "end") finishLive();
     if (a === "free") continueWith(null);
-    if (a === "plan") setTimeout(() => planner({ cont: true }), 250);
+    if (a === "plan") setTimeout(() => plansHub({ cont: true }), 250);
   });
 }
 async function continueWith(plan) {
@@ -1243,9 +1330,27 @@ function updateLive() {
     if (pl.dataset.m !== marks) { pl.dataset.m = marks; $("#L-pmarks").innerHTML = marks; }
     const nx = pr.done ? null : planNext(pr, pt);
     if (!pg && !nx && !pr.done) { pl.hidden = true; live.classList.remove("has-plan"); } // libre y sin cambios: solo el reloj
+    const curSpd = planTarget(pr, pt).speed, modeCh = !!(nx && nx.mode && nx.mode !== L.mode);
+    const lead = modeCh ? 15 : 10;
+    const soon = !!nx && L.state === "running" && !(pr.warm && pt < 10) && nx.in <= lead;
+    pl.classList.toggle("soon", soon);
+    pl.classList.toggle("hot", soon && modeCh);
+    pl.classList.toggle("dn", soon && !modeCh && nx.speed < curSpd);
+    if (soon) {
+      const n = Math.max(1, Math.ceil(nx.in));
+      if (pr.beep !== n) { if (n <= 3) haptic(n === 1 ? [40, 40, 40] : 25); else if (pr.beep == null) haptic([30, 60, 30]); pr.beep = n; }
+      const what = modeCh ? (nx.mode === "inc" ? "Subí las patitas" : "Bajá las patitas") : nx.speed > curSpd ? "Sube a" : nx.speed < curSpd ? "Baja a" : "Sigue a";
+      $("#L-pnext").innerHTML = `<span class="sn-n num">${n}</span><span class="sn-t">${what}<b class="num">${icon(nx.speed >= curSpd ? "up" : "down", 15)}${dec1(nx.speed)} km/h</b></span><i class="sn-bar"><i style="width:${(nx.in / lead * 100).toFixed(1)}%"></i></i>`;
+      return finishLiveUi(L);
+    }
+    pr.beep = null;
     $("#L-pnext").innerHTML = nx ? `<span>${pr.warm && pt < 10 ? "Calentando" : "Próximo"}</span><b class="num">${dec1(nx.speed)} km/h</b>${nx.mode ? `<i class="md ${nx.mode}">${nx.mode === "inc" ? "INCLINADA" : "PLANO"}</i>` : ""}<em class="num">en ${C.fmtTime(nx.in)}</em>` : "";
   }
 
+  finishLiveUi(L);
+}
+function finishLiveUi(L) {
+  const spd = ble.liveSpeed();
   const showTarget = targetSpeed != null && Date.now() - targetAt < 3000;
   const tg = $("#L-target");
   tg.classList.toggle("pending", showTarget);
@@ -1364,6 +1469,28 @@ async function finishLive() {
   render();
   setTimeout(() => openSession(s, true), 350);
   duoSync(true);
+}
+// La app se cerró con una caminata a medias: seguir, guardar o descartar.
+function resumeSheet() {
+  const L = S.live; if (!L) return;
+  const p = byId(L.profileId) || me(), t = C.totals(L.segs);
+  const hh = new Date(L.start).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const s = UI.sheet(`<div class="sheet-body center goal-hit resume">
+    <div class="gh-badge rs">${icon("pause", 30)}</div>
+    <h3 class="sheet-title">Caminata sin terminar</h3>
+    <p class="gh-sub">${esc(p ? p.name : "")} · ${relDay(L.start)} ${hh}</p>
+    <div class="gh-stats"><div><b class="num">${C.fmtTime(t.sec)}</b><span>tiempo</span></div><div><b class="num">${dec2(liveKm(L, t))}</b><span>km</span></div><div><b class="num">${int(p && isNet(p) ? t.net : t.gross)}</b><span>${p ? kcalWord(p) : "kcal"}</span></div></div>
+    <button class="btn btn-primary" data-a="go">${icon("play", 16)}Continuar</button>
+    <div class="gh-more"><button class="btn btn-soft" data-a="end">${icon("check", 18)}Finalizar</button><button class="btn btn-soft rs-drop" data-a="drop">${icon("trash", 17)}Descartar</button></div>
+  </div>`);
+  s.el.addEventListener("click", e => {
+    const b = e.target.closest("[data-a]"); if (!b) return;
+    haptic(12); s.close();
+    const a = b.dataset.a;
+    if (a === "go") setTimeout(showLive, 200);
+    if (a === "end") finishLive();
+    if (a === "drop") discardLive();
+  });
 }
 async function discardLive() {
   if (!(await UI.confirm({ title: "¿Descartar la caminata?", text: "No se va a guardar nada.", ok: "Descartar", danger: true }))) return;
@@ -1494,7 +1621,9 @@ document.addEventListener("click", e => {
   const a = el.dataset.act;
   const acts = {
     "start": () => startFlow(S.live ? null : quickPlan()),
-    "plan": () => planner(),
+    "plan": () => plansHub(),
+    "plans": () => plansHub(),
+    "start-main": () => { const x = mainPlan(); if (x) startPlan(x); },
     "new-profile": newProfile,
     "switch": switchSheet,
     "device": deviceSheet,
@@ -1536,7 +1665,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.8";
+const VERSION = "1.9";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
@@ -1575,7 +1704,8 @@ buildLive();
 render();
 if (S.live) {
   if (S.live.state !== "paused") S.live.state = "paused"; // tras recargar queda en pausa
-  showLive();
+  save.live();
+  setTimeout(resumeSheet, 300);
 }
 setInterval(tick, 1000);
 setTimeout(() => checkUpdate(false), 1500);
