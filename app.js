@@ -387,7 +387,7 @@ function versionEgg() {
 }
 
 // ================= duelo de km (Firebase Realtime Database por REST) =================
-const DUO_DB = (store.get("duoDb", null) || "").replace(/\/$/, "");
+const DUO_DB = (store.get("duoDb", null) || "https://paso-682df-default-rtdb.firebaseio.com").replace(/\/$/, "");
 const duoUrl = (room, path = "") => `${DUO_DB}/rooms/${room}${path}.json`;
 const keyTs = k => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d).getTime(); };
 function duoPayload(p) {
@@ -1496,7 +1496,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.7";
+const VERSION = "1.7.1";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
