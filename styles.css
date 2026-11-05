@@ -187,6 +187,10 @@ body.onboarding .cta, body.onboarding .tabbar { display: none; }
 .day.done i { background: linear-gradient(135deg, var(--k1), var(--k2)); color: #fff; box-shadow: 0 4px 14px -2px rgba(255, 61, 113, .45); }
 .day.today { color: var(--t1); }
 .day.today i { outline: 2px solid var(--t1); outline-offset: 2px; }
+.day:disabled { cursor: default; }
+.day.sel { color: var(--acc); }
+.day.sel i { outline: 2px solid var(--acc); outline-offset: 2px; box-shadow: 0 0 16px -2px rgba(198, 255, 61, .5); }
+.card-t.cap::first-letter { text-transform: uppercase; }
 
 .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .mini { background: var(--s1); border: 1px solid var(--line); border-radius: 20px; padding: 16px; text-align: left; }
@@ -896,3 +900,23 @@ html.land .live-mid { grid-row: 2 / 6; }
 html.land .cue { top: 50%; }
 .sh-name { display: flex; align-items: center; gap: 8px; text-align: left; color: var(--t1); }
 .sh-name .ic { flex: none; color: var(--t3); }
+
+/* historial: varias caminatas del mismo día en una tarjeta */
+.dgroup { border-radius: 20px; background: var(--s1); border: 1px solid var(--line); margin-bottom: 10px; padding: 14px 14px 6px; }
+.dgroup .dg-head { padding: 0; margin: 0; background: none; border: 0; border-radius: 0; }
+.dgroup .dg-head:active { transform: none; }
+.dg-head .date { background: linear-gradient(160deg, rgba(255, 162, 61, .22), rgba(255, 61, 113, .14)); }
+.dg-list { position: relative; margin-top: 12px; padding-top: 4px; border-top: 1px solid var(--line); }
+.dg-list::before { content: ""; position: absolute; left: 24px; top: 26px; bottom: 26px; width: 2px; border-radius: 2px; background: linear-gradient(var(--k1), var(--k2)); opacity: .35; }
+.dg-list.solo { margin-top: 0; padding-top: 0; border-top: 0; }
+.dg-row { position: relative; display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; padding: 10px 0; border-radius: 14px; transition: background .15s; }
+.dg-row:active { background: var(--s2); }
+.dg-dot { flex: none; width: 50px; display: grid; place-items: center; }
+.dg-dot::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: linear-gradient(135deg, var(--k1), var(--k2)); box-shadow: 0 0 0 4px var(--s1), 0 0 12px rgba(255, 61, 113, .45); }
+.dg-m { flex: 1; min-width: 0; }
+.dg-m b { display: block; font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
+.dg-m span { font-size: 12px; color: var(--t2); font-weight: 550; }
+.dg-k { text-align: right; }
+.dg-k b { display: block; font-size: 16px; font-weight: 750; letter-spacing: -.02em; color: var(--t1); }
+.dg-k span { font-size: 10px; color: var(--t3); font-weight: 650; }
+.dg-empty { color: var(--t3); font-size: 14px; font-weight: 600; padding: 6px 0 10px; }

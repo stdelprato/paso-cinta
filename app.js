@@ -44,7 +44,7 @@ const gradeOf = mode => mode === "inc" ? incGrade() : 0;
 const weekFrom = () => C.weekStart(new Date()).getTime();
 const weekKcal = p => sessionsOf(p).filter(s => s.start >= weekFrom()).reduce((a, s) => a + kcalOf(s, p), 0);
 const fmtDay = (ts, o) => new Date(ts).toLocaleDateString("es-AR", o);
-const fmtHour = ts => new Date(ts).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+const fmtHour = ts => new Date(ts).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
 // ================= navegación =================
@@ -81,10 +81,15 @@ function renderHome() {
   const ss = sessionsOf(p);
   const ws = weekFrom();
   const week = ss.filter(s => s.start >= ws);
-  const wk = week.reduce((a, s) => a + kcalOf(s, p), 0);
-  const wkm = week.reduce((a, s) => a + s.km, 0);
-  const wsec = week.reduce((a, s) => a + s.sec, 0);
-  const goal = p.goal || 2000;
+  const tIdx = Math.round((C.dayStart(new Date()) - ws) / 864e5);
+  const hd = view.hday != null ? view.hday : S.settings.home === "day" ? tIdx : -1;
+  const dSel = hd >= 0 ? C.dayKey(C.addDays(new Date(ws), hd)) : null;
+  const pick = dSel ? week.filter(s => C.dayKey(s.start) === dSel) : week;
+  const wk = pick.reduce((a, s) => a + kcalOf(s, p), 0);
+  const wkm = pick.reduce((a, s) => a + s.km, 0);
+  const wsec = pick.reduce((a, s) => a + s.sec, 0);
+  const goal = (p.goal || 2000) / (dSel ? 7 : 1);
+  const wTitle = !dSel ? "Esta semana" : hd === tIdx ? "Hoy" : hd === tIdx - 1 ? "Ayer" : fmtDay(C.addDays(new Date(ws), hd), { weekday: "long" });
   const days = new Set(week.map(s => C.dayKey(s.start)));
   const today = C.dayKey(Date.now());
   const st = C.streak(ss);
@@ -108,20 +113,21 @@ function renderHome() {
     </div>` : ""}
 
     <div class="card week">
-      <div class="card-h"><span class="card-t">Esta semana</span><span class="card-s">Meta ${int(goal)} ${kcalWord(p)}</span></div>
+      <div class="card-h"><span class="card-t cap">${wTitle}</span>
+        <div class="chips"><button class="chip-btn ${dSel ? "on" : ""}" data-act="home-v" data-v="day">Día</button><button class="chip-btn ${dSel ? "" : "on"}" data-act="home-v" data-v="week">Semana</button></div></div>
       <div class="week-main">
         <div class="ring-box">${UI.ring({ pct: 0, size: 148, stroke: 14 })}
-          <div class="ring-in">${icon("flame", 18)}<b class="num" id="wk-k">0</b><span>${Math.round(wk / goal * 100)}%</span></div>
+          <div class="ring-in">${icon("flame", 18)}<b class="num" id="wk-k">0</b><span>${Math.round(wk / goal * 100)}% de ${int(goal)}</span></div>
         </div>
         <div class="wk-stats">
           <div class="wk-stat"><span class="bub dist">${icon("route", 18)}</span><div><b class="num">${dec1(wkm)}</b><span>km</span></div></div>
           <div class="wk-stat"><span class="bub time">${icon("clock", 18)}</span><div><b class="num">${durParts(wsec)}</b><span>tiempo</span></div></div>
-          <div class="wk-stat"><span class="bub acc">${icon("bolt", 18)}</span><div><b class="num">${week.length}</b><span>${week.length === 1 ? "caminata" : "caminatas"}</span></div></div>
+          <div class="wk-stat"><span class="bub acc">${icon("bolt", 18)}</span><div><b class="num">${pick.length}</b><span>${pick.length === 1 ? "caminata" : "caminatas"}</span></div></div>
         </div>
       </div>
       <div class="days">${"LMMJVSD".split("").map((l, i) => {
         const d = C.dayKey(C.addDays(new Date(ws), i));
-        return `<div class="day ${days.has(d) ? "done" : ""} ${d === today ? "today" : ""}"><i>${days.has(d) ? icon("check", 15) : ""}</i>${l}</div>`;
+        return `<button class="day ${days.has(d) ? "done" : ""} ${d === today ? "today" : ""} ${i === hd ? "sel" : ""}" data-act="hday" data-i="${i}" ${i > tIdx ? "disabled" : ""}><i>${days.has(d) ? icon("check", 15) : ""}</i>${l}</button>`;
       }).join("")}</div>
     </div>
 
@@ -169,6 +175,11 @@ function refreshDevice() {
 // ================= progreso =================
 function periodInfo() {
   const now = new Date();
+  if (view.period === "day") {
+    const from = C.addDays(C.dayStart(now), view.offset);
+    const title = view.offset === 0 ? "Hoy" : view.offset === -1 ? "Ayer" : fmtDay(from, { weekday: "long", day: "numeric", month: "short" });
+    return { from, to: C.addDays(from, 1), n: 1, bucket: "day", labels: [""], title, prev: "el día anterior", prevShort: view.offset === 0 ? "ayer" : "día anterior", every: 1 };
+  }
   if (view.period === "week") {
     const from = C.addDays(C.weekStart(now), view.offset * 7);
     const to = C.addDays(from, 7);
@@ -229,20 +240,21 @@ function renderProgress() {
 
   // historial agrupado por mes
   let hist = "", lastM = "";
-  ss.slice(0, 80).forEach(s => {
-    const m = fmtDay(s.start, { month: "long", year: "numeric" });
+  const groups = [];
+  ss.slice(0, 120).forEach(s => {
+    const k = C.dayKey(s.start), g = groups[groups.length - 1];
+    if (g && g.k === k) g.s.push(s); else groups.push({ k, s: [s] });
+  });
+  groups.forEach(g => {
+    const s0 = g.s[0];
+    const m = fmtDay(s0.start, { month: "long", year: "numeric" });
     if (m !== lastM) { hist += `<div class="month-t">${m}</div>`; lastM = m; }
-    const inc = s.incSec > s.sec / 2;
-    hist += `<button class="sess" data-act="session" data-id="${s.id}">
-      <div class="date"><b>${new Date(s.start).getDate()}</b><span>${fmtDay(s.start, { weekday: "short" }).replace(".", "")}</span></div>
-      <div class="mid"><b class="num">${dec2(s.km)} km${inc ? '<i class="tag-inc"></i>' : ""}${Math.abs(s.km - 3.14) < 0.005 ? '<i class="egg">π</i>' : ""}</b><span>${dur(s.sec)} · ${fmtHour(s.start)}</span></div>
-      <div class="kc"><b class="num">${int(kcalOf(s, p))}</b><span>kcal</span></div>
-    </button>`;
+    hist += g.s.length === 1 ? sessRow(s0, p) : dayGroup(g.s, p);
   });
 
   $("#s-progress").innerHTML = `
     <header class="top"><h1>Progreso</h1><button class="icon-btn" data-act="add-manual" aria-label="Cargar caminata">${icon("plus", 20)}</button></header>
-    ${UI.seg("period", [{ v: "week", label: "Semana" }, { v: "month", label: "Mes" }, { v: "year", label: "Año" }], view.period)}
+    ${UI.seg("period", [{ v: "day", label: "Día" }, { v: "week", label: "Semana" }, { v: "month", label: "Mes" }, { v: "year", label: "Año" }], view.period)}
     <div class="period-nav">
       <button class="icon-btn" data-act="prev">${icon("chevL", 20)}</button>
       <b>${esc(info.title)}</b>
@@ -263,12 +275,17 @@ function renderProgress() {
 
     ${duelCard(p, info)}
 
+    ${view.period === "day" ? `
+    <div class="card">
+      <div class="card-h"><span class="card-t">Caminatas</span></div>
+      ${cur.length ? `<div class="dg-list solo">${dgRows(cur, p)}</div>` : `<div class="dg-empty">Sin caminatas este día</div>`}
+    </div>` : `
     <div class="card metric-${view.metric}">
       <div class="card-h"><span class="card-t">Actividad</span>
         <div class="chips">${[["kcal", "kcal"], ["km", "km"], ["min", "min"]].map(([v, l]) => `<button class="chip-btn ${view.metric === v ? "on" : ""}" data-act="metric" data-v="${v}">${l}</button>`).join("")}</div>
       </div>
       ${UI.bars(vals, info.labels, { active, fmt: fmtM, showEvery: info.every, allValues: info.n <= 12 })}
-    </div>
+    </div>`}
 
     <div class="card">
       <div class="card-h"><span class="card-t">Constancia</span><span class="card-s">18 semanas</span></div>
@@ -292,6 +309,34 @@ function renderProgress() {
     ${hist || `<div class="empty">${icon("steps", 40)}<b>Sin caminatas todavía</b>Tu primera aparece acá.</div>`}`;
 
   requestAnimationFrame(() => UI.countUp($("#pk"), kc));
+}
+const kmTags = s => `${s.incSec > s.sec / 2 ? '<i class="tag-inc"></i>' : ""}${Math.abs(s.km - 3.14) < 0.005 ? '<i class="egg">π</i>' : ""}`;
+const dateBox = ts => `<div class="date"><b>${new Date(ts).getDate()}</b><span>${fmtDay(ts, { weekday: "short" }).replace(".", "")}</span></div>`;
+function sessRow(s, p) {
+  return `<button class="sess" data-act="session" data-id="${s.id}">
+    ${dateBox(s.start)}
+    <div class="mid"><b class="num">${dec2(s.km)} km${kmTags(s)}</b><span>${dur(s.sec)} · ${fmtHour(s.start)}</span></div>
+    <div class="kc"><b class="num">${int(kcalOf(s, p))}</b><span>kcal</span></div>
+  </button>`;
+}
+// caminatas de un día, en orden (la primera arriba)
+function dgRows(list, p) {
+  return list.slice().sort((x, y) => x.start - y.start).map(s => `<button class="dg-row" data-act="session" data-id="${s.id}">
+    <i class="dg-dot"></i>
+    <div class="dg-m"><b class="num">${dec2(s.km)} km${kmTags(s)}</b><span>${fmtHour(s.start)} · ${dur(s.sec)}</span></div>
+    <div class="dg-k"><b class="num">${int(kcalOf(s, p))}</b><span>kcal</span></div>
+  </button>`).join("");
+}
+function dayGroup(list, p) {
+  const km = list.reduce((a, s) => a + s.km, 0), sec = list.reduce((a, s) => a + s.sec, 0), kc = list.reduce((a, s) => a + kcalOf(s, p), 0);
+  return `<div class="dgroup">
+    <div class="sess dg-head">
+      ${dateBox(list[0].start)}
+      <div class="mid"><b class="num">${dec2(km)} km</b><span>${list.length} caminatas · ${dur(sec)}</span></div>
+      <div class="kc"><b class="num">${int(kc)}</b><span>kcal</span></div>
+    </div>
+    <div class="dg-list">${dgRows(list, p)}</div>
+  </div>`;
 }
 function rec(label, val, unit, s, ic) {
   if (!s) return "";
@@ -1637,6 +1682,8 @@ document.addEventListener("click", e => {
     "prev": () => { view.offset--; view.sel = -1; render(); },
     "next": () => { if (view.offset < 0) { view.offset++; view.sel = -1; render(); } },
     "metric": () => { view.metric = el.dataset.v; haptic(5); render(); },
+    "home-v": () => { S.settings.home = el.dataset.v; save.settings(); view.hday = null; haptic(5); render(); },
+    "hday": () => { const i = +el.dataset.i, cur = $("#s-home .day.sel"); view.hday = cur && +cur.dataset.i === i ? -1 : i; haptic(5); render(); },
     "export": exportData,
     "import": importData,
     "delete-profile": deleteProfile,
@@ -1661,11 +1708,22 @@ document.addEventListener("click", e => {
     if (name === "kcalmode") { me().kcalMode = v; save.profiles(); UI.setSeg(segBtn.parentElement, v); setTimeout(render, 200); }
   }
   const bar = e.target.closest(".screen .bar");
-  if (bar) { view.sel = +bar.dataset.i; haptic(4); $$(".screen .bar").forEach(b => b.classList.toggle("on", b === bar)); }
+  if (bar) {
+    const i = +bar.dataset.i;
+    if (bar.classList.contains("on")) { // segundo toque: abrir ese día (o mes)
+      const info = periodInfo(), now = new Date();
+      let per, off;
+      if (info.bucket === "day") { per = "day"; off = Math.round((C.addDays(info.from, i) - C.dayStart(now)) / 864e5); }
+      else { per = "month"; off = (info.from.getFullYear() - now.getFullYear()) * 12 + i - now.getMonth(); }
+      if (off <= 0) { view.period = per; view.offset = off; view.sel = -1; haptic(6); render(); }
+      return;
+    }
+    view.sel = i; haptic(4); $$(".screen .bar").forEach(b => b.classList.toggle("on", b === bar));
+  }
 });
 
 // ================= versión =================
-const VERSION = "1.9";
+const VERSION = "1.10";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
