@@ -704,3 +704,45 @@ input[type="datetime-local"].field { font-size: 15px; color-scheme: dark; }
 .spd button.x5, .spd button.up.x5 { background: rgba(255, 255, 255, .12); }
 .spd button i { font-size: 18px; opacity: .55; }
 .spd .sv b { font-size: 50px; }
+
+/* ---------- 1.7: historial, viaje, datos, duelo ---------- */
+.h-add { display: flex; align-items: center; gap: 5px; height: 34px; padding: 0 13px 0 10px; border-radius: 99px; background: var(--s2); border: 1px solid var(--line); color: var(--t1); font-size: 13px; font-weight: 700; }
+.h-add:active { transform: scale(.95); }
+.egg { font-style: normal; margin-left: 6px; font-size: 13px; color: var(--t3); font-weight: 700; }
+.icon-btn.ed { flex: 0 0 52px; width: 52px; height: 52px; border-radius: 18px; color: var(--t2); }
+
+.trip { display: flex; flex-direction: column; gap: 18px; }
+.trip-h { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; color: var(--t3); }
+.trip-new { font-style: normal; font-size: 11px; letter-spacing: .04em; color: var(--ink); background: var(--acc); padding: 3px 8px; border-radius: 99px; text-transform: none; }
+.trip-d { display: flex; align-items: center; gap: 6px; margin: 6px 0 10px; color: var(--t3); }
+.trip-d .o { font-size: 14px; font-weight: 600; color: var(--t2); }
+.trip-d b { font-size: 20px; font-weight: 800; letter-spacing: -.02em; color: var(--t1); }
+.trip-bar { position: relative; height: 6px; border-radius: 99px; background: rgba(255, 255, 255, .07); }
+.trip-bar i { position: absolute; inset: 0 auto 0 0; border-radius: 99px; background: linear-gradient(90deg, var(--acc2), var(--acc)); }
+.trip-bar i::after { content: ""; position: absolute; right: -5px; top: 50%; width: 12px; height: 12px; margin-top: -6px; border-radius: 50%; background: var(--acc); box-shadow: 0 0 0 4px rgba(198, 255, 61, .18); }
+.trip-f { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; font-weight: 650; color: var(--t2); }
+
+.fact { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; padding: 16px; }
+.fact:active { transform: scale(.98); }
+.fact-ic { flex: none; width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; background: var(--s3); color: var(--acc); }
+.fact-t { font-size: 15px; font-weight: 600; line-height: 1.35; color: var(--t1); transition: opacity .16s, transform .16s; }
+.fact-t.out { opacity: 0; transform: translateY(4px); }
+
+.duel { display: block; width: 100%; text-align: left; }
+.du-r { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 4px 10px; margin-top: 12px; }
+.du-r:first-of-type { margin-top: 0; }
+.du-n { font-size: 15px; font-weight: 650; }
+.du-r b { font-size: 20px; font-weight: 800; letter-spacing: -.03em; }
+.du-r b small { font-size: 12px; color: var(--t2); margin-left: 3px; font-weight: 650; }
+.du-bar { grid-column: 2 / 4; height: 6px; border-radius: 99px; background: rgba(255, 255, 255, .06); }
+.du-bar i { display: block; height: 100%; border-radius: 99px; background: var(--c); opacity: .45; transition: width .8s var(--ease); }
+.du-r.lead .du-bar i { opacity: 1; box-shadow: 0 0 12px var(--c); }
+.du-msg { margin-top: 14px; font-size: 13px; color: var(--t2); font-weight: 600; }
+.du-msg b { color: var(--t1); }
+.duel-inv { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 16px; margin-bottom: 14px; border-radius: 20px; background: var(--s1); border: 1px solid var(--line); color: var(--t2); font-size: 14px; font-weight: 650; }
+.duel-inv span { flex: 1; text-align: left; color: var(--t1); }
+.duel-inv b { color: var(--acc); font-weight: 750; }
+.duo-av { display: flex; justify-content: center; margin: 6px 0 12px; }
+.duo-av .avatar { width: 56px; height: 56px; font-size: 22px; border: 3px solid var(--bg); }
+.duo-av .avatar + .avatar { margin-left: -12px; }
+.avatar.q { --c: #3a3f4a; color: var(--t2); }

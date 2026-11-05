@@ -62,7 +62,7 @@ function renderTabs() {
   $("#tabs").innerHTML = [["home", "home", "Inicio"], ["progress", "chart", "Progreso"], ["profile", "user", "Perfil"]]
     .map(([t, ic, l]) => `<button data-tab="${t}" class="${view.tab === t ? "on" : ""}">${icon(ic, 23)}<span>${l}</span></button>`).join("");
 }
-function go(tab) { if (view.tab === tab) return; view.tab = tab; haptic(6); render(); const sc = $(".screen.on"); if (sc) sc.scrollTop = 0; }
+function go(tab) { if (view.tab === tab) return; view.tab = tab; haptic(6); render(); if (tab === "progress") duoSync(); const sc = $(".screen.on"); if (sc) sc.scrollTop = 0; }
 
 // ================= bienvenida =================
 function renderWelcome() {
@@ -231,7 +231,7 @@ function renderProgress() {
     const inc = s.incSec > s.sec / 2;
     hist += `<button class="sess" data-act="session" data-id="${s.id}">
       <div class="date"><b>${new Date(s.start).getDate()}</b><span>${fmtDay(s.start, { weekday: "short" }).replace(".", "")}</span></div>
-      <div class="mid"><b class="num">${dec2(s.km)} km${inc ? '<i class="tag-inc"></i>' : ""}</b><span>${dur(s.sec)} · ${fmtHour(s.start)}</span></div>
+      <div class="mid"><b class="num">${dec2(s.km)} km${inc ? '<i class="tag-inc"></i>' : ""}${Math.abs(s.km - 3.14) < 0.005 ? '<i class="egg">π</i>' : ""}</b><span>${dur(s.sec)} · ${fmtHour(s.start)}</span></div>
       <div class="kc"><b class="num">${int(kcalOf(s, p))}</b><span>kcal</span></div>
     </button>`;
   });
@@ -257,6 +257,8 @@ function renderProgress() {
       </div>
     </div>
 
+    ${duelCard(p, info)}
+
     <div class="card metric-${view.metric}">
       <div class="card-h"><span class="card-t">Actividad</span>
         <div class="chips">${[["kcal", "kcal"], ["km", "km"], ["min", "min"]].map(([v, l]) => `<button class="chip-btn ${view.metric === v ? "on" : ""}" data-act="metric" data-v="${v}">${l}</button>`).join("")}</div>
@@ -270,6 +272,8 @@ function renderProgress() {
       <div class="heat-leg">Menos <i class="hm"></i><i class="hm l1"></i><i class="hm l2"></i><i class="hm l3"></i><i class="hm l4"></i> Más</div>
     </div>
 
+    ${ss.length ? tripCard(p, ss, sum(cur, s => s.km), info) + factCard(p, ss) : ""}
+
     ${ss.length ? `
     <div class="h-sec"><h2>Récords</h2></div>
     <div class="recs">
@@ -280,7 +284,7 @@ function renderProgress() {
       <div class="rec">${icon("steps", 20)}<b class="num">${dec1(totalKm)}<small>km</small></b><span>En total</span><em>${ss.length} caminatas</em></div>
     </div>` : ""}
 
-    <div class="h-sec"><h2>Historial</h2></div>
+    <div class="h-sec"><h2>Historial</h2><button class="h-add" data-act="add-manual">${icon("plus", 15)}Cargar</button></div>
     ${hist || `<div class="empty">${icon("steps", 40)}<b>Sin caminatas todavía</b>Tu primera aparece acá.</div>`}`;
 
   requestAnimationFrame(() => UI.countUp($("#pk"), kc));
@@ -288,6 +292,205 @@ function renderProgress() {
 function rec(label, val, unit, s, ic) {
   if (!s) return "";
   return `<button class="rec" data-act="session" data-id="${s.id}">${icon(ic, 20)}<b class="num">${val}${unit ? `<small>${unit}</small>` : ""}</b><span>${label}</span><em>${fmtDay(s.start, { day: "numeric", month: "short", year: "numeric" })}</em></button>`;
+}
+
+
+// ================= viaje y datos =================
+const HOME = "Villa Domínico";
+// [km por calle aprox., nombre corto, con artículo]
+const STOPS = [[2, "Sarandí", "Sarandí"], [3, "Wilde", "Wilde"], [5, "Avellaneda", "Avellaneda centro"], [6, "Cilindro de Racing", "el Cilindro"],
+  [6.5, "Puente Pueyrredón", "el Puente Pueyrredón"], [7.5, "Bernal", "Bernal"], [9, "La Bombonera", "La Bombonera"], [9.5, "Quilmes", "Quilmes"],
+  [12, "Plaza de Mayo", "Plaza de Mayo"], [13, "Obelisco", "el Obelisco"], [17, "Planetario", "el Planetario"], [19, "Aeroparque", "Aeroparque"],
+  [22, "Monumental", "el Monumental"], [33, "Ezeiza", "Ezeiza"], [45, "Tigre", "Tigre"], [48, "La Plata", "La Plata"], [80, "Luján", "Luján"],
+  [120, "Chascomús", "Chascomús"], [310, "Rosario", "Rosario"], [400, "Mar del Plata", "Mar del Plata"], [610, "La Pampa", "La Pampa"],
+  [700, "Córdoba", "Córdoba"], [1050, "Mendoza", "Mendoza"], [1300, "Cataratas", "las Cataratas"], [1600, "Bariloche", "Bariloche"],
+  [1800, "La Quiaca", "La Quiaca"], [3050, "Ushuaia", "Ushuaia"], [4100, "Antártida", "la Antártida"], [40075, "Vuelta al mundo", "la vuelta al mundo"]];
+function tripInfo(km) {
+  let i = -1;
+  while (i + 1 < STOPS.length && STOPS[i + 1][0] <= km) i++;
+  const at = i >= 0 ? STOPS[i] : null, next = STOPS[i + 1] || null, from = at ? at[0] : 0;
+  return { i, at, next, pct: next ? (km - from) / (next[0] - from) : 1, left: next ? next[0] - km : 0 };
+}
+function tripRow(label, km, fresh) {
+  const t = tripInfo(km);
+  return `<div class="trip-r">
+    <div class="trip-h"><span>${label}</span>${fresh ? '<em class="trip-new">Nueva parada</em>' : ""}</div>
+    <div class="trip-d"><span class="o">${HOME}</span>${icon("chevR", 14)}<b>${t.at ? t.at[1] : `${int(km * 10)} cuadras`}</b></div>
+    <div class="trip-bar"><i style="width:${Math.max(2, t.pct * 100)}%"></i></div>
+    <div class="trip-f"><span class="num">${dec1(km)} km</span><span>${t.next ? `${dec1(Math.max(0.1, t.left))} km a ${t.next[2]}` : "Fin del mapa"}</span></div>
+  </div>`;
+}
+function tripCard(p, ss, periodKm, info) {
+  const total = ss.reduce((a, s) => a + s.km, 0);
+  const seen = (S.settings.trip || {})[p.id];
+  const idx = tripInfo(total).i;
+  const fresh = seen !== undefined && idx > seen;
+  if (seen === undefined || idx > seen) { S.settings.trip = Object.assign({}, S.settings.trip, { [p.id]: idx }); save.settings(); }
+  const same = Math.abs(total - periodKm) < 0.005;
+  return `<div class="card trip">
+    ${same ? "" : tripRow(esc(info.title), periodKm)}
+    ${tripRow("En total", total, fresh)}
+  </div>`;
+}
+function facts(p, ss) {
+  const km = ss.reduce((a, s) => a + s.km, 0), sec = ss.reduce((a, s) => a + s.sec, 0), kc = ss.reduce((a, s) => a + kcalOf(s, p), 0);
+  const climb = ss.reduce((a, s) => a + (s.segs || []).reduce((b, g) => b + (g.km != null ? g.km : g.speed * g.sec / 3600) * (g.grade || 0) * 1000, 0), 0);
+  const n = x => int(Math.floor(x));
+  const F = [`${n(km * 10)} cuadras caminadas en total.`, `${n(C.steps(km, p.height))} pasos desde que usás Paso.`];
+  const H = [[67.5, "el Obelisco"], [330, "la Torre Eiffel"], [828, "el Burj Khalifa"], [2388, "el Cerro Catedral"], [6961, "el Aconcagua"], [8849, "el Everest"]];
+  const h = H.filter(x => x[0] <= climb).pop();
+  if (climb >= 1) F.push(h ? `Subiste ${n(climb)} m en la inclinada: ${climb / h[0] >= 2 ? dec1(climb / h[0]) + " veces " : ""}${h[1]}.` : `Subiste ${n(climb)} m en la inclinada. El Obelisco mide 67.`);
+  F.push(km >= 42.195 ? `Llevás ${dec1(km / 42.195)} maratones.` : `Te faltan ${dec1(42.195 - km)} km para tu primera maratón.`);
+  F.push(`La banda de la cinta dio unas ${n(km * 1000 / 2.6)} vueltas.`);
+  if (kc >= 120) F.push(`Quemaste ${n(kc / 120)} medialunas.`);
+  if (kc >= 230) F.push(`Quemaste ${n(kc / 230)} alfajores.`);
+  if (kc >= 280) F.push(`Quemaste ${n(kc / 280)} porciones de muzza.`);
+  if (kc >= 450) F.push(`Quemaste ${n(kc / 450)} choripanes.`);
+  if (sec >= 5400) F.push(`Caminaste lo que duran ${dec1(sec / 5400)} partidos de fútbol.`);
+  if (sec >= 11640) F.push(`Caminaste ${dec1(sec / 11640)} veces Titanic.`);
+  if (sec >= 41160) F.push(`Caminaste ${dec1(sec / 41160)} veces El Señor de los Anillos extendido.`);
+  F.push(`Una tortuga gigante tardaría ${n(km / 0.3)} h en hacer tus ${dec1(km)} km.`);
+  F.push(`Usain Bolt haría tus ${dec1(km)} km en ${C.fmtTime(km / 37.6 * 3600)}.`);
+  F.push(`Llevás el ${(km / 40075 * 100).toFixed(3).replace(".", ",")} % de la vuelta al mundo.`);
+  F.push(`A la Luna te faltan ${n(384400 - km)} km. Tranqui.`);
+  const late = ss.filter(s => { const hr = new Date(s.start).getHours(); return hr >= 23 || hr < 5; }).length;
+  if (late) F.push(`${late} ${late === 1 ? "caminata" : "caminatas"} después de las 23. Búho.`);
+  const early = ss.filter(s => new Date(s.start).getHours() < 8 && new Date(s.start).getHours() >= 5).length;
+  if (early) F.push(`${early} ${early === 1 ? "caminata" : "caminatas"} antes de las 8. Temprano.`);
+  if (ss.length >= 4) {
+    const c = [0, 0, 0, 0, 0, 0, 0]; ss.forEach(s => c[new Date(s.start).getDay()]++);
+    F.push(`Tu día favorito: los ${["domingos", "lunes", "martes", "miércoles", "jueves", "viernes", "sábados"][c.indexOf(Math.max(...c))]}.`);
+  }
+  const top = Math.max(0, ...ss.map(s => Math.max(0, ...(s.samples || []))));
+  if (top > 0) F.push(`Tu velocidad máxima: ${dec1(top)} km/h.`);
+  if (km >= 6) F.push(`Ya podrías haber ido caminando a la cancha de Racing. Y volver.`);
+  return F;
+}
+function factCard(p, ss) {
+  const F = facts(p, ss);
+  if (view.fact == null) view.fact = Math.floor(Date.now() / 864e5) % F.length;
+  return `<button class="card fact" data-act="fact"><span class="fact-ic">${icon("dice", 18)}</span><span class="fact-t" id="fact">${F[view.fact % F.length]}</span></button>`;
+}
+function nextFact() {
+  const el = $("#fact"); if (!el) return;
+  const F = facts(me(), sessionsOf(me()));
+  view.fact = (view.fact + 1) % F.length;
+  haptic(5);
+  el.classList.add("out");
+  setTimeout(() => { el.textContent = F[view.fact]; el.classList.remove("out"); }, 160);
+}
+let eggTaps = 0, eggT = 0;
+function versionEgg() {
+  if (Date.now() - eggT > 1500) eggTaps = 0;
+  eggT = Date.now();
+  if (++eggTaps === 7) { eggTaps = 0; haptic([10, 40, 10]); UI.toast("Paso a paso se llega a Ushuaia."); }
+}
+
+// ================= duelo de km (Firebase Realtime Database por REST) =================
+const DUO_DB = (store.get("duoDb", null) || "").replace(/\/$/, "");
+const duoUrl = (room, path = "") => `${DUO_DB}/rooms/${room}${path}.json`;
+const keyTs = k => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d).getTime(); };
+function duoPayload(p) {
+  const d = {}, from = Date.now() - 400 * 864e5, ss = sessionsOf(p);
+  ss.forEach(s => { if (s.start < from) return; const k = C.dayKey(s.start); const v = d[k] || [0, 0]; v[0] += s.km; v[1] += s.sec; d[k] = v; });
+  Object.values(d).forEach(v => { v[0] = Math.round(v[0] * 1000) / 1000; v[1] = Math.round(v[1]); });
+  return { name: firstName(p), color: p.color, upd: Date.now(), tk: Math.round(ss.reduce((a, s) => a + s.km, 0) * 100) / 100, d };
+}
+let duoBusy = false;
+async function duoSync(force) {
+  const p = me();
+  if (!DUO_DB || !p || !p.duo || duoBusy) return;
+  if (!force && Date.now() - (p.duo.at || 0) < 20e3) return;
+  duoBusy = true;
+  try {
+    await fetch(duoUrl(p.duo.room, "/m/" + p.id), { method: "PUT", body: JSON.stringify(duoPayload(p)) });
+    const m = (await (await fetch(duoUrl(p.duo.room, "/m"))).json()) || {};
+    const oid = Object.keys(m).find(k => k !== p.id);
+    const before = JSON.stringify(p.duo.rival || null);
+    p.duo.rival = oid ? Object.assign({ id: oid }, m[oid]) : null;
+    p.duo.at = Date.now(); save.profiles();
+    if (JSON.stringify(p.duo.rival || null) !== before && view.tab === "progress" && !S.live) render();
+  } catch (e) {} finally { duoBusy = false; }
+}
+const duoLink = room => `${location.origin}${location.pathname}?duo=${room}`;
+async function duoShare(room) {
+  const url = duoLink(room);
+  try { if (navigator.share) { await navigator.share({ title: "Paso", text: "¿Duelo de km?", url }); return; } } catch (e) { return; }
+  try { await navigator.clipboard.writeText(url); UI.toast("Link copiado"); } catch (e) { UI.toast(url); }
+}
+function duoSheet() {
+  const p = me();
+  if (!DUO_DB) { UI.toast("El duelo todavía no está activado"); return; }
+  if (p.duo) {
+    const r = p.duo.rival;
+    const s = UI.sheet(`<div class="sheet-body center">
+      <div class="duo-av">${avatar(p)}${r ? avatar(r) : `<span class="avatar q">?</span>`}</div>
+      <h3 class="sheet-title">Duelo de km</h3>
+      <p class="sheet-text">${r ? `Contra ${esc(r.name)}` : "Esperando a que abra el link"}</p>
+      ${r ? "" : `<button class="btn btn-primary" data-share>Mandar link</button>`}
+      <button class="btn btn-soft" data-leave>Salir del duelo</button><button class="btn btn-ghost" data-close>Cerrar</button></div>`);
+    const sb = s.el.querySelector("[data-share]");
+    if (sb) sb.onclick = () => duoShare(p.duo.room);
+    s.el.querySelector("[data-leave]").onclick = async () => {
+      if (!(await UI.confirm({ title: "¿Salir del duelo?", ok: "Salir", danger: true }))) return;
+      fetch(duoUrl(p.duo.room, "/m/" + p.id), { method: "DELETE" }).catch(() => {});
+      p.duo = null; save.profiles(); s.close(); render();
+    };
+    return;
+  }
+  const s = UI.sheet(`<div class="sheet-body center">
+    <div class="duo-av">${avatar(p)}<span class="avatar q">?</span></div>
+    <h3 class="sheet-title">Duelo de km</h3>
+    <p class="sheet-text">Compiten por kilómetros. Se comparte solo tu nombre, km y minutos.</p>
+    <button class="btn btn-primary" data-inv>Invitar</button>
+    <input class="field" id="duo-in" placeholder="Pegá el link que te mandaron" autocomplete="off">
+    <button class="btn btn-soft" data-join>Unirme</button></div>`);
+  s.el.querySelector("[data-inv]").onclick = async () => {
+    const room = (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, "") : uid() + uid() + uid()).slice(0, 24);
+    p.duo = { room }; save.profiles();
+    await duoSync(true);
+    s.close(); render(); duoShare(room);
+  };
+  s.el.querySelector("[data-join]").onclick = () => { const v = s.el.querySelector("#duo-in").value; if (!v.trim()) return; s.close(); duoJoin(v); };
+}
+async function duoJoin(raw) {
+  const p = me();
+  if (!p || !DUO_DB) return;
+  const room = ((raw.match(/duo=([A-Za-z0-9_-]+)/) || [])[1] || raw.trim());
+  if (!/^[A-Za-z0-9_-]{12,40}$/.test(room)) { UI.toast("Link inválido"); return; }
+  if (p.duo && p.duo.room === room) { go("progress"); return; }
+  let m;
+  try { m = await (await fetch(duoUrl(room, "/m"))).json(); } catch (e) { UI.toast("Sin conexión"); return; }
+  const o = m && Object.entries(m).find(([k]) => k !== p.id);
+  if (!o) { UI.toast("Ese duelo ya no existe"); return; }
+  if (!(await UI.confirm({ title: `¿Duelo con ${o[1].name}?`, text: "Compiten por km. Se comparte tu nombre, km y minutos.", ok: "Aceptar" }))) return;
+  p.duo = { room }; save.profiles();
+  await duoSync(true);
+  haptic(15); UI.toast(`Duelo con ${o[1].name} activado`);
+  view.tab = "progress"; render();
+}
+function duoPending() {
+  const room = store.get("pendingDuo", null);
+  if (!room || !me()) return;
+  store.set("pendingDuo", null);
+  setTimeout(() => duoJoin(room), 700);
+}
+function duelCard(p, info) {
+  if (!DUO_DB) return "";
+  if (!p.duo) return `<button class="duel-inv" data-act="duo">${icon("users", 18)}<span>Duelo de km</span><b>Invitar</b></button>`;
+  const r = p.duo.rival;
+  if (!r) return `<button class="duel-inv" data-act="duo">${icon("users", 18)}<span>Duelo de km</span><b>Esperando…</b></button>`;
+  const from = info.from.getTime(), to = info.to.getTime();
+  const mine = sessionsOf(p).filter(s => s.start >= from && s.start < to).reduce((a, s) => a + s.km, 0);
+  const hers = Object.entries(r.d || {}).reduce((a, [k, v]) => { const t = keyTs(k); return t >= from && t < to ? a + v[0] : a; }, 0);
+  const max = Math.max(mine, hers, 0.01), diff = mine - hers;
+  const msg = Math.abs(diff) < 0.005 ? (mine > 0 ? "Empate" : "Nadie caminó todavía") : diff > 0 ? `Vas ganando por <b>${dec2(diff)} km</b>` : `Te faltan <b>${dec2(-diff)} km</b> para pasar a ${esc(r.name)}`;
+  const rowH = (x, name, v) => `<div class="du-r ${v > 0 && v >= Math.max(mine, hers) ? "lead" : ""}">${avatar({ name, color: x.color }, "sm")}<span class="du-n">${esc(name)}</span><b class="num">${dec2(v)}<small>km</small></b><div class="du-bar"><i style="--c:${x.color};width:${v / max * 100}%"></i></div></div>`;
+  return `<button class="card duel" data-act="duo">
+    <div class="card-h"><span class="card-t">Duelo</span><span class="card-s">${esc(info.title)}</span></div>
+    ${rowH(p, firstName(p), mine)}${rowH(r, r.name, hers)}
+    <div class="du-msg">${msg}</div>
+  </button>`;
 }
 
 // ================= perfil =================
@@ -342,12 +545,13 @@ function renderProfile() {
     <div class="group-t">Perfiles y datos</div>
     <div class="group">
       <button class="row" data-act="switch"><span class="ri">${icon("users", 18)}</span><span class="rl">Cambiar de perfil</span>${icon("chevR", 18, "chev")}</button>
+      ${DUO_DB ? `<button class="row" data-act="duo"><span class="ri">${icon("users", 18)}</span><span class="rl">Duelo de km</span><span class="rv">${p.duo ? (p.duo.rival ? esc(p.duo.rival.name) : "Esperando") : ""}</span>${icon("chevR", 18, "chev")}</button>` : ""}
       <button class="row" data-act="export"><span class="ri">${icon("download", 18)}</span><span class="rl">Exportar copia</span>${icon("chevR", 18, "chev")}</button>
       <button class="row" data-act="import"><span class="ri">${icon("upload", 18)}</span><span class="rl">Importar copia</span>${icon("chevR", 18, "chev")}</button>
       <button class="row danger" data-act="delete-profile"><span class="ri">${icon("trash", 18)}</span><span class="rl">Eliminar perfil</span></button>
     </div>
     <p class="foot">Calorías estimadas con la fórmula ACSM para caminata,<br>según tu peso, la velocidad y la inclinación.</p>
-    <div class="ver">Paso ${VERSION} · <button data-act="update">Buscar actualizaciones</button></div>`;
+    <div class="ver"><span data-act="egg">Paso ${VERSION}</span> · <button data-act="update">Buscar actualizaciones</button></div>`;
 }
 function row(ic, label, val, field) {
   return `<button class="row" data-act="field" data-f="${field}"><span class="ri">${icon(ic, 18)}</span><span class="rl">${label}</span><span class="rv">${val}</span>${icon("chevR", 18, "chev")}</button>`;
@@ -440,6 +644,7 @@ function newProfile() {
       save.profiles(); save.active();
       s.close(); haptic(15); view.tab = "home"; render();
       UI.toast(`¡Listo, ${firstName(p)}!`);
+      duoPending();
     };
   };
   draw();
@@ -468,51 +673,58 @@ function deviceSheet() {
   s.el.querySelector("[data-x]").onclick = () => { ble.disconnect(); s.close(); };
 }
 
-// ================= cargar caminata pasada =================
-function manualSheet() {
-  const p = me();
-  const now = new Date(Date.now() - 3600e3);
-  now.setMinutes(0, 0, 0);
-  const pad = n => String(n).padStart(2, "0");
-  const d = { when: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:00`, h: 0, m: 30, km: 2, kmd: 0, mode: S.settings.lastMode };
+// ================= cargar / editar caminata =================
+const pad2 = n => String(n).padStart(2, "0");
+const toLocalInput = ts => { const t = new Date(ts); return `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}T${pad2(t.getHours())}:${pad2(t.getMinutes())}`; };
+function walkSheet(edit) {
+  const p = edit ? byId(edit.profileId) : me();
+  const kg = edit ? (edit.kg || p.weight) : p.weight;
+  const hourAgo = new Date(Date.now() - 3600e3); hourAgo.setMinutes(0, 0, 0);
+  const base = edit
+    ? { when: toLocalInput(edit.start), sec: Math.round(edit.sec), spd: Math.max(1, Math.round((edit.sec ? edit.km / (edit.sec / 3600) : 4) * 10) / 10), mode: edit.incSec > edit.sec / 2 ? "inc" : "flat" }
+    : { when: toLocalInput(hourAgo.getTime()), sec: 30 * 60, spd: S.settings.lastSpeed || 5, mode: S.settings.startMode || "inc" };
+  const d = { ...base };
+  const calc = () => {
+    const k = C.kcalPerMin(d.spd, gradeOf(d.mode), kg);
+    return { km: d.spd * d.sec / 3600, kcal: (isNet(p) ? k.net : k.gross) * d.sec / 60 };
+  };
   const body = document.createElement("div");
   body.className = "sheet-body";
-  const calc = () => {
-    const sec = (d.h * 60 + d.m) * 60, km = d.km + d.kmd / 100;
-    const spd = sec ? km / (sec / 3600) : 0;
-    const k = C.kcalPerMin(spd, gradeOf(d.mode), p.weight);
-    return { sec, km, spd, kcal: (isNet(p) ? k.net : k.gross) * sec / 60 };
-  };
   const draw = () => {
     const c = calc();
     body.innerHTML = `
-      <h3 class="sheet-title">Cargar caminata</h3>
+      <h3 class="sheet-title">${edit ? "Editar caminata" : "Cargar caminata"}</h3>
       <input class="field" type="datetime-local" id="mw" value="${d.when}">
       <div class="group" style="margin:0">
-        <button class="row" data-f="dur"><span class="ri">${icon("clock", 18)}</span><span class="rl">Duración</span><span class="rv">${d.h ? d.h + " h " : ""}${d.m} min</span>${icon("chevR", 18, "chev")}</button>
-        <button class="row" data-f="km"><span class="ri">${icon("route", 18)}</span><span class="rl">Distancia</span><span class="rv">${dec2(c.km)} km</span>${icon("chevR", 18, "chev")}</button>
+        <button class="row" data-f="dur"><span class="ri">${icon("clock", 18)}</span><span class="rl">Duración</span><span class="rv">${C.fmtTime(d.sec)}</span>${icon("chevR", 18, "chev")}</button>
+        <button class="row" data-f="spd"><span class="ri">${icon("gauge", 18)}</span><span class="rl">Velocidad</span><span class="rv">${dec1(d.spd)} km/h</span>${icon("chevR", 18, "chev")}</button>
       </div>
       ${UI.seg("mmode", [{ v: "flat", label: "PLANO" }, { v: "inc", label: "INCLINADA" }], d.mode, "big mode")}
       <div class="tiles">
-        <div class="tile">${icon("gauge", 18, "c-acc")}<b class="num">${dec1(c.spd)}</b><span>km/h</span></div>
+        <div class="tile">${icon("route", 18, "c-dist")}<b class="num">${dec2(c.km)}</b><span>km</span></div>
         <div class="tile">${icon("flame", 18, "c-k")}<b class="num">${int(c.kcal)}</b><span>${kcalWord(p)}</span></div>
-        <div class="tile">${icon("steps", 18, "c-dist")}<b class="num">${int(C.steps(c.km, p.height))}</b><span>pasos</span></div>
+        <div class="tile">${icon("steps", 18, "c-acc")}<b class="num">${int(C.steps(c.km, p.height))}</b><span>pasos</span></div>
       </div>
-      <button class="btn btn-primary" data-save>Guardar</button>`;
+      <button class="btn btn-primary" data-save>${edit ? "Guardar cambios" : "Guardar"}</button>`;
     body.querySelector("#mw").onchange = e => d.when = e.target.value;
-    body.querySelector('[data-f="dur"]').onclick = () => UI.pick({ title: "Duración", sep: ":", columns: [{ values: UI.range(0, 5), value: d.h, format: v => v + " h", width: "90px" }, { values: UI.range(0, 59), value: d.m, format: v => pad(v) + " min", width: "110px" }], onDone: ([h, m]) => { d.h = h; d.m = m; draw(); } });
-    body.querySelector('[data-f="km"]').onclick = () => UI.pick({ title: "Distancia", sep: ",", unit: "km", columns: [{ values: UI.range(0, 30), value: d.km, width: "80px" }, { values: UI.range(0, 99), value: d.kmd, format: v => pad(v), width: "80px" }], onDone: ([a, b]) => { d.km = a; d.kmd = b; draw(); } });
+    body.querySelector('[data-f="dur"]').onclick = () => UI.pick({ title: "Duración", sep: ":", columns: [{ values: UI.range(0, 240), value: Math.floor(d.sec / 60), format: v => v + " min", width: "110px" }, { values: UI.range(0, 59), value: d.sec % 60, format: v => pad2(v) + " s", width: "90px" }], onDone: ([m, sx]) => { d.sec = m * 60 + sx; draw(); } });
+    body.querySelector('[data-f="spd"]').onclick = () => UI.pick({ title: "Velocidad promedio", sep: ",", unit: "km/h", columns: speedCols(d.spd), onDone: v => { d.spd = speedOf(v); draw(); } });
     body.querySelector('[data-seg="mmode"]').onclick = e => { const b = e.target.closest("button"); if (b) { d.mode = b.dataset.v; haptic(6); draw(); } };
     body.querySelector("[data-save]").onclick = () => {
-      const c2 = calc();
-      if (c2.sec < 60 || c2.km <= 0) { UI.toast("Completá duración y distancia"); return; }
+      if (d.sec < 30) { UI.toast("Poné la duración"); return; }
       const start = new Date(d.when).getTime() || Date.now();
-      const segs = [];
-      C.addToSegments(segs, Math.round(c2.spd * 10) / 10, gradeOf(d.mode), c2.sec, p.weight);
-      segs[0].km = c2.km;
-      const sess = { id: uid(), profileId: p.id, start, end: start + c2.sec * 1000, source: "manual", kg: p.weight, segs, samples: [], ...C.totals(segs) };
-      S.sessions.push(sess); S.sessions.sort((a, b) => b.start - a.start); save.sessions();
-      s.close(); haptic(15); render(); UI.toast("Caminata guardada");
+      const changed = !edit || d.sec !== base.sec || d.spd !== base.spd || d.mode !== base.mode;
+      const sess = edit || { id: uid(), profileId: p.id, source: "manual", kg, samples: [] };
+      if (changed) {
+        const segs = [];
+        C.addToSegments(segs, d.spd, gradeOf(d.mode), d.sec, kg);
+        Object.assign(sess, { segs, ...C.totals(segs) });
+      }
+      sess.start = start; sess.end = start + sess.sec * 1000;
+      if (edit) sess.edited = true; else S.sessions.push(sess);
+      S.sessions.sort((x, y) => y.start - x.start); save.sessions();
+      s.close(); haptic(15); render(); duoSync(true);
+      UI.toast(edit ? "Caminata actualizada" : "Caminata guardada");
     };
   };
   draw();
@@ -536,7 +748,7 @@ function openSession(s, fresh = false) {
     <div class="sum">
       <div class="sum-top">
         ${fresh ? `<div class="sum-badge">${icon("check", 24)}</div>` : ""}
-        <div class="grow"><h2>${title}</h2><p>${fmtDay(s.start, { weekday: "short", day: "numeric", month: "short" })} · ${fmtHour(s.start)}${s.planName ? " · " + esc(s.planName) : ""}${s.source === "manual" ? " · a mano" : ""}</p></div>
+        <div class="grow"><h2>${title}</h2><p>${fmtDay(s.start, { weekday: "short", day: "numeric", month: "short" })} · ${fmtHour(s.start)}${s.planName ? " · " + esc(s.planName) : ""}${s.source === "manual" ? " · a mano" : ""}${s.edited ? " · editada" : ""}</p></div>
       </div>
       ${hits.length ? `<div class="sum-goal">${icon("trophy", 16)}Meta cumplida · ${hits.map(h => fmtGoal(h.goal)).join(" + ")}</div>` : ""}
       <div class="sum-hero">
@@ -557,7 +769,7 @@ function openSession(s, fresh = false) {
         ${samples.length > 3 ? `<div class="spd-chart sm">${UI.area(samples, { min: 0, max: Math.max(maxS * 1.15, 1), h: 70 })}</div>` : ""}
         <div class="segs-list" hidden>${segs.map(g => `<div class="sg"><i class="m ${g.grade > 0 ? "inc" : ""}"></i><div class="a num">${dec1(g.speed)} km/h<span>${g.grade > 0 ? "Inclinada" : "Plano"}</span></div><div class="b num">${C.fmtTime(g.sec)}<span>${int(isNet(p) ? g.net : g.gross)} kcal</span></div></div>`).join("")}</div>
       </div>` : ""}
-      <div class="sum-act"><button class="btn btn-primary" data-close>${fresh ? "Listo" : "Cerrar"}</button><button class="icon-btn del" data-del aria-label="Eliminar caminata">${icon("trash", 20)}</button></div>
+      <div class="sum-act"><button class="btn btn-primary" data-close>${fresh ? "Listo" : "Cerrar"}</button><button class="icon-btn ed" data-edit aria-label="Editar caminata">${icon("edit", 20)}</button><button class="icon-btn del" data-del aria-label="Eliminar caminata">${icon("trash", 20)}</button></div>
     </div>`;
   const sh = UI.sheet(body);
   setTimeout(() => UI.countUp(sh.el.querySelector("#sk"), kc, int, 1100), fresh ? 300 : 150);
@@ -565,8 +777,9 @@ function openSession(s, fresh = false) {
   if (tb) tb.onclick = () => { const l = sh.el.querySelector(".segs-list"); l.hidden = !l.hidden; tb.classList.toggle("on", !l.hidden); haptic(6); };
   sh.el.querySelector("[data-del]").onclick = async () => {
     if (!(await UI.confirm({ title: "¿Eliminar esta caminata?", text: "No se puede deshacer.", ok: "Eliminar", danger: true }))) return;
-    S.sessions = S.sessions.filter(x => x.id !== s.id); save.sessions(); sh.close(); render();
+    S.sessions = S.sessions.filter(x => x.id !== s.id); save.sessions(); sh.close(); render(); duoSync(true);
   };
+  sh.el.querySelector("[data-edit]").onclick = () => { sh.close(); setTimeout(() => walkSheet(s), 260); };
 }
 
 // ================= planes =================
@@ -1111,6 +1324,7 @@ async function finishLive() {
   S.sessions.unshift(s); save.sessions();
   render();
   setTimeout(() => openSession(s, true), 350);
+  duoSync(true);
 }
 async function discardLive() {
   if (!(await UI.confirm({ title: "¿Descartar la caminata?", text: "No se va a guardar nada.", ok: "Descartar", danger: true }))) return;
@@ -1192,7 +1406,7 @@ ble.addEventListener("state", refreshDevice);
 let wake = null;
 async function keepAwake() { try { if ("wakeLock" in navigator && !wake) { wake = await navigator.wakeLock.request("screen"); wake.addEventListener("release", () => wake = null); } } catch (e) {} }
 function releaseAwake() { try { wake && wake.release(); } catch (e) {} wake = null; }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.live) keepAwake(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState !== "visible") return; if (S.live) keepAwake(); else duoSync(); });
 
 // ================= backup =================
 function exportData() {
@@ -1248,7 +1462,10 @@ document.addEventListener("click", e => {
     "field": () => editField(el.dataset.f),
     "color": () => { me().color = el.dataset.v; save.profiles(); haptic(6); render(); },
     "session": () => { const s = S.sessions.find(x => x.id == el.dataset.id); if (s) openSession(s); },
-    "add-manual": manualSheet,
+    "add-manual": () => walkSheet(),
+    "fact": nextFact,
+    "egg": versionEgg,
+    "duo": duoSheet,
     "prev": () => { view.offset--; view.sel = -1; render(); },
     "next": () => { if (view.offset < 0) { view.offset++; view.sel = -1; render(); } },
     "metric": () => { view.metric = el.dataset.v; haptic(5); render(); },
@@ -1279,7 +1496,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.6.2";
+const VERSION = "1.7";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
@@ -1322,6 +1539,12 @@ if (S.live) {
 }
 setInterval(tick, 1000);
 setTimeout(() => checkUpdate(false), 1500);
+(() => { // link de invitación al duelo: ?duo=...
+  const q = new URLSearchParams(location.search).get("duo");
+  if (q) { store.set("pendingDuo", q); history.replaceState(null, "", location.pathname); }
+  duoPending();
+  setTimeout(() => duoSync(true), 2500);
+})();
 // Si Chrome ya conoce la cinta, conectarse en silencio
 ble.hasKnown().then(k => { if (k) ble.reconnectKnown(); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
