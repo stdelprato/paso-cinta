@@ -445,6 +445,40 @@ function duoPayload(p) {
   Object.values(d).forEach(v => { v[0] = Math.round(v[0] * 1000) / 1000; v[1] = Math.round(v[1]); });
   return { name: firstName(p), color: p.color, upd: Date.now(), tk: Math.round(ss.reduce((a, s) => a + s.km, 0) * 100) / 100, d };
 }
+// copia de seguridad del perfil en la sala del duelo (rooms/{room}/b/{id})
+function backupOf(p) {
+  const { duo, ...profile } = p;
+  return { v: 1, profile, sessions: sessionsOf(p), plans: S.plans, settings: S.settings };
+}
+const backupSig = b => { const t = JSON.stringify(b.profile) + JSON.stringify(b.plans); let h = 0; for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; return b.sessions.length + ":" + b.sessions.reduce((a, s) => a + (s.end || 0) + Math.round(s.sec || 0), 0) + ":" + h; };
+function restoreFrom(p, oldId, mm, bb) {
+  const sess = [];
+  if (bb && bb.profile) {
+    const { id, duo, name, ...rest } = bb.profile;
+    Object.assign(p, rest);
+    (bb.sessions || []).forEach(x => sess.push({ ...x, profileId: oldId }));
+    if (!S.plans.length && bb.plans) { S.plans = bb.plans; save.plans(); }
+    if (bb.settings && !store.get("settings", null)) { S.settings = Object.assign(S.settings, bb.settings); save.settings(); }
+  } else {
+    const kg = p.weight, mode = S.settings.startMode || "inc";
+    Object.entries((mm && mm.d) || {}).forEach(([k, v]) => {
+      const km = +v[0] || 0, sec = Math.round(+v[1] || 0);
+      if (!km || sec < 30) return;
+      const segs = [];
+      C.addToSegments(segs, km / (sec / 3600), gradeOf(mode), sec, kg);
+      const start = keyTs(k) + 12 * 3600e3;
+      sess.push({ id: uid(), profileId: oldId, source: "manual", recovered: true, kg, pct: S.settings.pct, samples: [], segs, ...C.totals(segs), start, end: start + sec * 1000 });
+    });
+  }
+  const newId = p.id;
+  p.id = oldId;
+  const ids = new Set(sess.map(x => x.id));
+  S.sessions = S.sessions.filter(x => !ids.has(x.id)).map(x => x.profileId === newId ? { ...x, profileId: oldId } : x).concat(sess);
+  S.sessions.sort((a, b) => b.start - a.start);
+  if (S.activeId === newId) S.activeId = oldId;
+  save.profiles(); save.sessions(); save.active();
+  return sess.length;
+}
 let duoBusy = false;
 async function duoSync(force) {
   const p = me();
@@ -453,8 +487,13 @@ async function duoSync(force) {
   duoBusy = true;
   try {
     await fetch(duoUrl(p.duo.room, "/m/" + p.id), { method: "PUT", body: JSON.stringify(duoPayload(p)) });
+    const bk = backupOf(p), sig = backupSig(bk);
+    if (p.duo.bs !== sig) {
+      const r = await fetch(duoUrl(p.duo.room, "/b/" + p.id), { method: "PUT", body: JSON.stringify(bk) });
+      if (r.ok) p.duo.bs = sig;
+    }
     const m = (await (await fetch(duoUrl(p.duo.room, "/m"))).json()) || {};
-    const oid = Object.keys(m).find(k => k !== p.id);
+    const oid = Object.keys(m).filter(k => k !== p.id).sort((a, b) => (m[b].upd || 0) - (m[a].upd || 0))[0];
     const before = JSON.stringify(p.duo.rival || null);
     p.duo.rival = oid ? Object.assign({ id: oid }, m[oid]) : null;
     p.duo.at = Date.now(); save.profiles();
@@ -476,13 +515,14 @@ function duoSheet() {
       <div class="duo-av">${avatar(p)}${r ? avatar(r) : `<span class="avatar q">?</span>`}</div>
       <h3 class="sheet-title">Duelo de km</h3>
       <p class="sheet-text">${r ? `Contra ${esc(r.name)}` : "Esperando a que abra el link"}</p>
-      ${r ? "" : `<button class="btn btn-primary" data-share>Mandar link</button>`}
+      <button class="btn ${r ? "btn-soft" : "btn-primary"}" data-share>Mandar link</button>
       <button class="btn btn-soft" data-leave>Salir del duelo</button><button class="btn btn-ghost" data-close>Cerrar</button></div>`);
     const sb = s.el.querySelector("[data-share]");
     if (sb) sb.onclick = () => duoShare(p.duo.room);
     s.el.querySelector("[data-leave]").onclick = async () => {
       if (!(await UI.confirm({ title: "¿Salir del duelo?", ok: "Salir", danger: true }))) return;
       fetch(duoUrl(p.duo.room, "/m/" + p.id), { method: "DELETE" }).catch(() => {});
+      fetch(duoUrl(p.duo.room, "/b/" + p.id), { method: "DELETE" }).catch(() => {});
       p.duo = null; save.profiles(); s.close(); render();
     };
     return;
@@ -490,7 +530,7 @@ function duoSheet() {
   const s = UI.sheet(`<div class="sheet-body center">
     <div class="duo-av">${avatar(p)}<span class="avatar q">?</span></div>
     <h3 class="sheet-title">Duelo de km</h3>
-    <p class="sheet-text">Compiten por kilómetros. Se comparte solo tu nombre, km y minutos.</p>
+    <p class="sheet-text">Compiten por kilómetros. Ven su nombre, km y minutos. Tus caminatas quedan respaldadas.</p>
     <button class="btn btn-primary" data-inv>Invitar</button>
     <input class="field" id="duo-in" placeholder="Pegá el link que te mandaron" autocomplete="off">
     <button class="btn btn-soft" data-join>Unirme</button></div>`);
@@ -508,14 +548,30 @@ async function duoJoin(raw) {
   const room = ((raw.match(/duo=([A-Za-z0-9_-]+)/) || [])[1] || raw.trim());
   if (!/^[A-Za-z0-9_-]{12,40}$/.test(room)) { UI.toast("Link inválido"); return; }
   if (p.duo && p.duo.room === room) { go("progress"); return; }
-  let m;
-  try { m = await (await fetch(duoUrl(room, "/m"))).json(); } catch (e) { UI.toast("Sin conexión"); return; }
-  const o = m && Object.entries(m).find(([k]) => k !== p.id);
+  let all;
+  try { all = (await (await fetch(duoUrl(room))).json()) || {}; } catch (e) { UI.toast("Sin conexión"); return; }
+  const m = all.m || {}, b = all.b || {};
+  let others = Object.entries(m).filter(([k]) => k !== p.id);
+  if (!others.length) { UI.toast("Ese duelo ya no existe"); return; }
+  const nm = firstName(p).toLowerCase();
+  const mine = !sessionsOf(p).length && nm && others.find(([k, v]) => (v.name || "").toLowerCase() === nm);
+  let restored = -1;
+  if (mine) {
+    const [oid, mv] = mine, bb = b[oid];
+    const n = bb && bb.sessions ? bb.sessions.length : Object.keys(mv.d || {}).length;
+    const text = bb ? `${n} caminatas · ${dec1(mv.tk || 0)} km` : `${n} días · ${dec1(mv.tk || 0)} km. Se recuperan km y tiempo por día; las kcal se recalculan.`;
+    if (await UI.confirm({ title: "¿Recuperar tus caminatas?", text, ok: "Recuperar" })) {
+      restored = restoreFrom(p, oid, mv, bb);
+      others = others.filter(([k]) => k !== oid);
+    }
+  }
+  const o = others.sort((x, y) => (y[1].upd || 0) - (x[1].upd || 0))[0];
   if (!o) { UI.toast("Ese duelo ya no existe"); return; }
-  if (!(await UI.confirm({ title: `¿Duelo con ${o[1].name}?`, text: "Compiten por km. Se comparte tu nombre, km y minutos.", ok: "Aceptar" }))) return;
+  if (restored < 0 && !(await UI.confirm({ title: `¿Duelo con ${o[1].name}?`, text: "Compiten por km. Ven su nombre, km y minutos.", ok: "Aceptar" }))) return;
   p.duo = { room }; save.profiles();
+  if (restored >= 0) UI.toast(`${restored} caminatas recuperadas`);
   await duoSync(true);
-  haptic(15); UI.toast(`Duelo con ${o[1].name} activado`);
+  haptic(15); if (restored < 0) UI.toast(`Duelo con ${o[1].name} activado`);
   view.tab = "progress"; render();
 }
 function duoPending() {
@@ -797,7 +853,7 @@ function openSession(s, fresh = false) {
     <div class="sum">
       <div class="sum-top">
         ${fresh ? `<div class="sum-badge">${icon("check", 24)}</div>` : ""}
-        <div class="grow"><h2>${title}</h2><p>${fmtDay(s.start, { weekday: "short", day: "numeric", month: "short" })} · ${fmtHour(s.start)}${s.planName ? " · " + esc(s.planName) : ""}${s.source === "manual" ? " · a mano" : ""}${s.edited ? " · editada" : ""}</p></div>
+        <div class="grow"><h2>${title}</h2><p>${fmtDay(s.start, { weekday: "short", day: "numeric", month: "short" })} · ${fmtHour(s.start)}${s.planName ? " · " + esc(s.planName) : ""}${s.source === "manual" && !s.recovered ? " · a mano" : ""}${s.edited ? " · editada" : ""}${s.recovered ? " · recuperada" : ""}</p></div>
       </div>
       ${hits.length ? `<div class="sum-goal">${icon("trophy", 16)}Meta cumplida · ${hits.map(h => fmtGoal(h.goal)).join(" + ")}</div>` : ""}
       <div class="sum-hero">
@@ -1723,7 +1779,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.10";
+const VERSION = "1.11";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
@@ -1773,6 +1829,8 @@ setTimeout(() => checkUpdate(false), 1500);
   duoPending();
   setTimeout(() => duoSync(true), 2500);
 })();
+// Pedirle a Chrome que no borre los datos (localStorage) por falta de espacio
+try { if (navigator.storage && navigator.storage.persist) navigator.storage.persisted().then(x => x || navigator.storage.persist()).catch(() => {}); } catch (e) {}
 // Si Chrome ya conoce la cinta, conectarse en silencio
 ble.hasKnown().then(k => { if (k) ble.reconnectKnown(); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
