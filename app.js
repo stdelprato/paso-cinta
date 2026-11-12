@@ -1174,8 +1174,7 @@ function runPlan(L) {
   const prev = pr.key;
   pr.key = tg.key;
   planBusy = true;
-  ble.setSpeed(tg.speed).catch(controlFailed).finally(() => { planBusy = false; });
-  targetSpeed = tg.speed; targetAt = Date.now();
+  ble.setSpeed(tg.speed).catch(() => {}).finally(() => { planBusy = false; });
   const modeCh = tg.mode && tg.mode !== L.mode;
   if (modeCh) { L.mode = tg.mode; UI.setSeg($('[data-seg="lmode"]'), L.mode); }
   save.live();
@@ -1230,12 +1229,11 @@ async function continueWith(plan) {
   if (plan) { attachPlan(L, plan, true); UI.setSeg($('[data-seg="lmode"]'), L.mode); }
   else L.prog = null;
   await resumeWithCountdown();
-  if (!plan && S.live && spd && ble.connected) ble.setSpeed(spd).catch(controlFailed);
+  if (!plan && S.live && spd && ble.connected) ble.setSpeed(spd).catch(() => {});
 }
 
 // ================= sesión en vivo =================
 let controlWarned = false;
-let targetSpeed = null, targetAt = 0;
 
 function buildLive() {
   $("#live").innerHTML = `
@@ -1302,14 +1300,13 @@ function buildLive() {
     const b = e.target.closest("button[data-d]");
     if (!b || !S.live) return;
     haptic(8);
-    const base = targetSpeed != null && Date.now() - targetAt < 3000 ? targetSpeed : ble.liveSpeed() || 1;
+    const base = ble.target ? ble.target.v : ble.liveSpeed() || 1;   // se suma sobre lo pedido, no sobre lo que la cinta va alcanzando
     const t = Math.max(1, Math.min(12, Math.round((base + +b.dataset.d) * 10) / 10));
-    targetSpeed = t; targetAt = Date.now();
     const L = S.live, pr = L.prog;
     if (pr && pr.warm && (L.run || 0) - pr.t0 < 10) { pr.warm = false; pr.key = planTarget(pr, (L.run || 0) - pr.t0).key; } // tocó durante el arranque suave
     S.settings.lastSpeed = t; save.settings();
+    ble.setSpeed(t).catch(() => {});   // los errores se reintentan solos; si no llega, avisa "targetfail"
     updateLive();
-    ble.setSpeed(t).catch(controlFailed);
   };
   $("#L-pause").onclick = () => {
     const L = S.live; if (!L) return;
@@ -1452,10 +1449,10 @@ function updateLive() {
 }
 function finishLiveUi(L) {
   const spd = ble.liveSpeed();
-  const showTarget = targetSpeed != null && Date.now() - targetAt < 3000;
+  const showTarget = !!ble.target;
   const tg = $("#L-target");
   tg.classList.toggle("pending", showTarget);
-  tg.querySelector("b").textContent = dec1(showTarget ? targetSpeed : spd);
+  tg.querySelector("b").textContent = dec1(showTarget ? ble.target.v : spd);
   $$("#L-ctl button").forEach(b => b.disabled = L.state !== "running" || !ble.connected);
 
   const act = L.state !== "paused";               // corriendo o arrancando → muestra "Pausa"
@@ -1668,6 +1665,8 @@ ble.addEventListener("data", e => {
   }
 });
 ble.addEventListener("state", refreshDevice);
+ble.addEventListener("target", () => { if (S.live) updateLive(); });
+ble.addEventListener("targetfail", () => { if (S.live) { updateLive(); UI.toast("La cinta no llegó a esa velocidad"); } });
 
 // ================= pantalla encendida =================
 let wake = null;
@@ -1779,7 +1778,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.11";
+const VERSION = "1.12";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);

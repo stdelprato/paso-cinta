@@ -14,6 +14,9 @@ class Treadmill extends EventTarget {
     this.pending = null;
     this.retry = null;
     this.logs = [];          // diagnóstico: últimos comandos y respuestas
+    this.q = Promise.resolve(); // los comandos van de a uno (la cinta atiende uno por vez)
+    this.target = null;      // velocidad pedida que la cinta todavía no alcanzó {v, at, sent, tries, best, bestAt}
+    this.speedJob = null;
   }
 
   log(msg) {
@@ -98,6 +101,7 @@ class Treadmill extends EventTarget {
     if (r.dist !== undefined) this.dist = r.dist;
     if (!this._lastLogged || Date.now() - this._lastLogged > 15000) { this._lastLogged = Date.now(); this.log(`Datos: ${this.speed} km/h · ${this.dist} m`); }
     this.lastAt = Date.now();
+    this.watchTarget();
     this.dispatchEvent(new CustomEvent("data", { detail: { speed: this.speed, dist: this.dist } }));
   }
 
@@ -131,8 +135,14 @@ class Treadmill extends EventTarget {
 
   async ensureControl() { if (!this.control) { await this.command(CintaCore.CMD.requestControl()); this.control = true; } }
 
+  // En fila: si se tocan botones rápido, los comandos no se pisan.
+  send(bytes) {
+    const run = this.q.then(() => this.sendNow(bytes));
+    this.q = run.catch(() => {});
+    return run;
+  }
   // Manda un comando; si la cinta dice "sin control" (o no responde), pide control de nuevo y reintenta una vez.
-  async send(bytes) {
+  async sendNow(bytes) {
     await this.ensureControl();
     try { await this.command(bytes); }
     catch (e) {
@@ -141,9 +151,48 @@ class Treadmill extends EventTarget {
       await this.command(bytes);
     }
   }
-  start() { return this.send(CintaCore.CMD.start()); }
-  pause() { return this.send(CintaCore.CMD.pause()); }
-  setSpeed(kmh) { return this.send(CintaCore.CMD.speed(kmh)); }
+  start() { this.clearTarget(); return this.send(CintaCore.CMD.start()); }
+  pause() { this.clearTarget(); return this.send(CintaCore.CMD.pause()); }
+
+  // Pide una velocidad y la sostiene: si la cinta no llega, reintenta hasta alcanzarla.
+  setSpeed(kmh) {
+    const d0 = Math.abs(this.liveSpeed() - kmh), now = Date.now();
+    this.target = { v: kmh, at: now, sent: now, tries: 0, best: d0, bestAt: now };
+    return this.pushSpeed();
+  }
+  // Toques seguidos se juntan: sale un solo comando con la última velocidad pedida.
+  pushSpeed() {
+    if (this.speedJob) return this.speedJob;
+    const job = this.q.then(() => {
+      this.speedJob = null;
+      const t = this.target;
+      if (!t) return;
+      t.sent = Date.now(); t.tries++;
+      return this.sendNow(CintaCore.CMD.speed(t.v));
+    });
+    this.speedJob = job;
+    this.q = job.catch(() => {});
+    return job;
+  }
+  clearTarget() { this.target = null; }
+  // Con cada dato de la cinta: ¿llegó? ¿se trabó? ¿la movieron con el control remoto?
+  watchTarget() {
+    const t = this.target; if (!t) return;
+    const now = Date.now(), d = Math.abs(this.speed - t.v);
+    if (d <= 0.15) { this.target = null; this.dispatchEvent(new Event("target")); return; }
+    if (d < t.best - 0.05) { t.best = d; t.bestAt = now; return; }
+    if (d > t.best + 0.6 && now - t.sent > 2500) { this.log(`Velocidad cambiada desde la cinta: suelto ${t.v}`); this.target = null; this.dispatchEvent(new Event("target")); return; }
+    if (this.speedJob || now - t.bestAt < 3000 || now - t.sent < 3000) return;
+    if (t.tries >= 6 || now - t.at > 30000) {
+      this.log(`✗ No llegó a ${t.v} km/h`);
+      this.target = null;
+      this.dispatchEvent(new Event("targetfail"));
+      return;
+    }
+    this.log(`No llega a ${t.v} km/h (va ${this.speed}): reintento`);
+    t.bestAt = now;
+    this.pushSpeed().catch(() => {});
+  }
 
   // Frenar: stop. La cinta desacelera despacio, así que se considera "frenando" si la velocidad baja.
   // Si a los 5 s no bajó nada, prueba pausa y después velocidad 0.
@@ -151,6 +200,7 @@ class Treadmill extends EventTarget {
     const wait = ms => new Promise(r => setTimeout(r, ms));
     const v0 = this.liveSpeed();
     const braking = () => this.liveSpeed() === 0 || this.liveSpeed() < v0 - 0.3;
+    this.clearTarget();
     try { await this.send(CintaCore.CMD.stop()); } catch (e) {}
     if (v0 === 0) return true;
     await wait(5000);
@@ -167,7 +217,7 @@ class Treadmill extends EventTarget {
   }
 
   drop() {
-    this.cp = null; this.control = false; this.speed = 0;
+    this.cp = null; this.control = false; this.speed = 0; this.target = null;
     clearTimeout(this.retry);
     if (!this.want || !this.device) return this.set("off");
     this.set("connecting");
