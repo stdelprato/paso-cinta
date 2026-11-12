@@ -451,6 +451,102 @@ function backupOf(p) {
   return { v: 1, profile, sessions: sessionsOf(p), plans: S.plans, settings: S.settings };
 }
 const backupSig = b => { const t = JSON.stringify(b.profile) + JSON.stringify(b.plans); let h = 0; for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; return b.sessions.length + ":" + b.sessions.reduce((a, s) => a + (s.end || 0) + Math.round(s.sec || 0), 0) + ":" + h; };
+const BK_DAYS = 14;
+// Sube la copia si cambió. No la pisa si de golpe hay muchas menos caminatas (posible error): queda "en pausa".
+async function backupPush(p, force) {
+  const bk = backupOf(p), sig = backupSig(bk), n = bk.sessions.length, prev = p.duo.bn || 0;
+  if (p.duo.bs === sig && !force) { p.duo.bt = Date.now(); return; }
+  if (!force && prev - n > 3 && n < prev * 0.8) { p.duo.hold = true; return; }
+  const body = JSON.stringify(bk);
+  const r = await fetch(duoUrl(p.duo.room, "/b/" + p.id), { method: "PUT", body });
+  if (!r.ok) return;
+  const today = C.dayKey(Date.now());
+  await fetch(duoUrl(p.duo.room, `/h/${p.id}/${today}`), { method: "PUT", body }).catch(() => {});
+  Object.assign(p.duo, { bs: sig, bn: n, bt: Date.now(), hold: false });
+  if (p.duo.hp !== today) {   // una vez por día: borrar copias de más de BK_DAYS días
+    p.duo.hp = today;
+    try {
+      const ks = Object.keys((await (await fetch(duoUrl(p.duo.room, `/h/${p.id}`) + "?shallow=true")).json()) || {});
+      ks.sort((a, b) => keyTs(b) - keyTs(a)).slice(BK_DAYS).forEach(k => fetch(duoUrl(p.duo.room, `/h/${p.id}/${k}`), { method: "DELETE" }).catch(() => {}));
+    } catch (e) {}
+  }
+}
+// Reemplaza el perfil y sus caminatas por los de una copia.
+function restoreSnapshot(p, bk) {
+  const { id, duo, ...rest } = bk.profile || {};
+  Object.assign(p, rest);
+  S.sessions = S.sessions.filter(s => s.profileId !== p.id).concat((bk.sessions || []).map(s => ({ ...s, profileId: p.id })));
+  S.sessions.sort((a, b) => b.start - a.start);
+  if (p.duo) Object.assign(p.duo, { hold: false, bs: null, bn: (bk.sessions || []).length });
+  save.profiles(); save.sessions();
+}
+const ago = t => {
+  const m = Math.floor((Date.now() - t) / 60e3);
+  if (m < 1) return "recién"; if (m < 60) return `hace ${m} min`;
+  const h = Math.floor(m / 60); if (h < 24) return `hace ${h} h`;
+  const d = Math.floor(h / 24); return d === 1 ? "ayer" : `hace ${d} días`;
+};
+function backupState(p) {
+  if (!p.duo) return { txt: "Sin duelo", warn: true };
+  if (p.duo.hold) return { txt: "En pausa", warn: true };
+  if (!p.duo.bt) return { txt: "Pendiente", warn: false };
+  return { txt: ago(p.duo.bt), warn: Date.now() - p.duo.bt > 3 * 864e5 };
+}
+function backupSheet() {
+  const p = me();
+  const st = backupState(p);
+  const last = S.settings.lastExport;
+  const msg = !p.duo ? "La copia automática se guarda en la sala del duelo. Sumate a un duelo para activarla."
+    : p.duo.hold ? "Hay muchas menos caminatas que en la copia, así que no la pisé. Si borraste a propósito, subila igual."
+    : `Se guarda sola cada vez que caminás. Última: ${st.txt}.`;
+  const s = UI.sheet(`<div class="sheet-body">
+    <h3 class="sheet-title">Copia de seguridad</h3>
+    <p class="sheet-text">${msg}</p>
+    ${p.duo ? `<div class="group bk-list" style="margin:0 0 10px"><div class="row"><span class="rl" style="color:var(--t2)">Buscando copias…</span></div></div>` : ""}
+    ${p.duo && p.duo.hold ? `<button class="btn btn-soft" data-force>Subir igual</button>` : ""}
+    <button class="btn btn-soft" data-file>Guardar en Drive</button>
+    <button class="btn btn-ghost" data-import>Importar archivo</button>
+    <p class="bk-foot">${last ? `Último archivo: ${ago(last)}` : "Todavía no guardaste un archivo"}</p></div>`);
+  s.el.querySelector("[data-file]").onclick = () => saveFileCopy();
+  s.el.querySelector("[data-import]").onclick = () => { s.close(); importData(); };
+  const fb = s.el.querySelector("[data-force]");
+  if (fb) fb.onclick = async () => { s.close(); try { await backupPush(p, true); save.profiles(); UI.toast("Copia subida"); } catch (e) { UI.toast("Sin conexión"); } render(); };
+  if (!p.duo) return;
+  const list = s.el.querySelector(".bk-list");
+  (async () => {
+    let ks = [];
+    try { ks = Object.keys((await (await fetch(duoUrl(p.duo.room, `/h/${p.id}`) + "?shallow=true")).json()) || {}); }
+    catch (e) { list.innerHTML = `<div class="row"><span class="rl" style="color:var(--t2)">Sin conexión</span></div>`; return; }
+    ks.sort((a, b) => keyTs(b) - keyTs(a));
+    const items = [{ k: "", label: "Más reciente" }].concat(ks.map(k => ({ k, label: fmtDay(keyTs(k), { weekday: "short", day: "numeric", month: "short" }) })));
+    list.innerHTML = items.map(it => `<button class="row" data-k="${it.k}"><span class="ri">${icon("clock", 18)}</span><span class="rl">${esc(it.label)}</span><span class="rv">Restaurar</span>${icon("chevR", 18, "chev")}</button>`).join("");
+    list.onclick = async e => {
+      const b = e.target.closest("[data-k]"); if (!b) return;
+      const k = b.dataset.k;
+      let bk;
+      try { bk = await (await fetch(duoUrl(p.duo.room, k ? `/h/${p.id}/${k}` : `/b/${p.id}`))).json(); } catch (er) { UI.toast("Sin conexión"); return; }
+      if (!bk || !bk.sessions) { UI.toast("Esa copia está vacía"); return; }
+      const now = sessionsOf(p).length, n = bk.sessions.length;
+      if (!(await UI.confirm({ title: k ? `¿Restaurar la copia del ${b.querySelector(".rl").textContent}?` : "¿Restaurar la última copia?", text: `Tenés ${now} caminatas; la copia tiene ${n}. Se reemplazan.`, ok: "Restaurar" }))) return;
+      restoreSnapshot(p, bk);
+      s.close(); haptic(15); render(); UI.toast(`${n} caminatas restauradas`);
+      duoSync(true);
+    };
+  })();
+}
+// Archivo con la copia completa: menú de compartir (Drive, WhatsApp…) o descarga.
+async function saveFileCopy() {
+  const name = `paso-copia-${new Date().toISOString().slice(0, 10)}.json`;
+  const json = JSON.stringify({ app: "paso", v: 2, profiles: S.profiles, sessions: S.sessions, settings: S.settings, plans: S.plans });
+  const file = new File([json], name, { type: "application/json" });
+  const done = () => { S.settings.lastExport = Date.now(); save.settings(); render(); };
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "Copia de Paso" }); done(); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(file); a.download = name; a.click();
+  done(); UI.toast("Copia guardada");
+}
 function restoreFrom(p, oldId, mm, bb) {
   const sess = [];
   if (bb && bb.profile) {
@@ -487,11 +583,7 @@ async function duoSync(force) {
   duoBusy = true;
   try {
     await fetch(duoUrl(p.duo.room, "/m/" + p.id), { method: "PUT", body: JSON.stringify(duoPayload(p)) });
-    const bk = backupOf(p), sig = backupSig(bk);
-    if (p.duo.bs !== sig) {
-      const r = await fetch(duoUrl(p.duo.room, "/b/" + p.id), { method: "PUT", body: JSON.stringify(bk) });
-      if (r.ok) p.duo.bs = sig;
-    }
+    await backupPush(p);
     const m = (await (await fetch(duoUrl(p.duo.room, "/m"))).json()) || {};
     const oid = Object.keys(m).filter(k => k !== p.id).sort((a, b) => (m[b].upd || 0) - (m[a].upd || 0))[0];
     const before = JSON.stringify(p.duo.rival || null);
@@ -651,8 +743,7 @@ function renderProfile() {
     <div class="group">
       <button class="row" data-act="switch"><span class="ri">${icon("users", 18)}</span><span class="rl">Cambiar de perfil</span>${icon("chevR", 18, "chev")}</button>
       ${DUO_DB ? `<button class="row" data-act="duo"><span class="ri">${icon("users", 18)}</span><span class="rl">Duelo de km</span><span class="rv">${p.duo ? (p.duo.rival ? esc(p.duo.rival.name) : "Esperando") : ""}</span>${icon("chevR", 18, "chev")}</button>` : ""}
-      <button class="row" data-act="export"><span class="ri">${icon("download", 18)}</span><span class="rl">Exportar copia</span>${icon("chevR", 18, "chev")}</button>
-      <button class="row" data-act="import"><span class="ri">${icon("upload", 18)}</span><span class="rl">Importar copia</span>${icon("chevR", 18, "chev")}</button>
+      ${(st => `<button class="row" data-act="backup"><span class="ri">${icon("shield", 18)}</span><span class="rl">Copia de seguridad</span><span class="rv${st.warn ? " warn" : ""}">${st.txt}</span>${icon("chevR", 18, "chev")}</button>`)(backupState(p))}
       <button class="row danger" data-act="delete-profile"><span class="ri">${icon("trash", 18)}</span><span class="rl">Eliminar perfil</span></button>
     </div>
     <p class="foot">Calorías estimadas con la fórmula ACSM para caminata,<br>según tu peso, la velocidad y la inclinación.</p>
@@ -1693,6 +1784,7 @@ function importData() {
       const np = (d.profiles || []).filter(p => !pids.has(p.id));
       const ns = (d.sessions || []).filter(s => !sids.has(s.id));
       S.profiles.push(...np); S.sessions.push(...ns);
+      if (!S.plans.length && Array.isArray(d.plans)) { S.plans = d.plans; save.plans(); }
       S.sessions.sort((a, b) => b.start - a.start);
       if (!S.activeId && S.profiles[0]) S.activeId = S.profiles[0].id;
       save.profiles(); save.sessions(); save.active(); render();
@@ -1740,6 +1832,7 @@ document.addEventListener("click", e => {
     "home-v": () => { S.settings.home = el.dataset.v; save.settings(); view.hday = null; haptic(5); render(); },
     "hday": () => { const i = +el.dataset.i, cur = $("#s-home .day.sel"); view.hday = cur && +cur.dataset.i === i ? -1 : i; haptic(5); render(); },
     "export": exportData,
+    "backup": backupSheet,
     "import": importData,
     "delete-profile": deleteProfile,
     "update": () => checkUpdate(true),
@@ -1778,7 +1871,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.12";
+const VERSION = "1.13";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);

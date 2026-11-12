@@ -342,6 +342,9 @@ body.onboarding .cta, body.onboarding .tabbar { display: none; }
 .row:active { background: rgba(255, 255, 255, .03); }
 .row .ri { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; background: var(--s3); color: var(--t2); flex: none; }
 .row .rl { flex: 1; font-weight: 600; font-size: 15px; }
+.row .rv.warn { color: var(--danger); }
+.bk-list { max-height: 42vh; overflow-y: auto; }
+.bk-foot { color: var(--t3); font-size: 12.5px; text-align: center; margin: 4px 0 0; }
 .row .rv { color: var(--t2); font-weight: 600; font-size: 15px; font-variant-numeric: tabular-nums; }
 .row .chev { color: var(--t3); }
 .row.danger .rl, .row.danger .ri { color: var(--danger); }
