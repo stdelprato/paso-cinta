@@ -76,6 +76,25 @@
     return "Obesidad";
   }
 
+  // Metros subidos: distancia sobre la banda × seno del ángulo de la pendiente.
+  const climbM = segs => (segs || []).reduce((a, g) => {
+    const gr = g.grade || 0, km = g.km != null ? g.km : g.speed * g.sec / 3600;
+    return a + km * 1000 * gr / Math.sqrt(1 + gr * gr);
+  }, 0);
+  // Metabolismo basal (Mifflin-St Jeor), kcal/día. sex: "m" | "f" | otro = promedio.
+  const bmr = (kg, cm, age, sex) => 10 * kg + 6.25 * (cm || 170) - 5 * (age || 30) + (sex === "m" ? 5 : sex === "f" ? -161 : -78);
+  // Caminar en plano (ACSM): las kcal netas por km no dependen de la velocidad = 0,5 × kg.
+  const walkNetPerKm = kg => 0.5 * kg;
+  // Inclinación medida con el acelerómetro: ángulo entre dos vectores de gravedad (o contra la vertical).
+  function tiltDeg(v, ref) {
+    const n = a => Math.hypot(a.x, a.y, a.z);
+    const nv = n(v);
+    if (!nv) return null;
+    if (!ref) return Math.acos(Math.min(1, Math.abs(v.z) / nv)) * 180 / Math.PI;
+    const d = (v.x * ref.x + v.y * ref.y + v.z * ref.z) / (nv * n(ref));
+    return Math.acos(Math.max(-1, Math.min(1, d))) * 180 / Math.PI;
+  }
+
   // ---------- tiempo ----------
   function fmtTime(sec) {
     sec = Math.max(0, Math.floor(sec));
@@ -117,7 +136,7 @@
 
   const api = {
     parseTreadmillData, CMD, gradeFromDeg, kcalPerMin, addToSegments, totals,
-    strideM, steps, bmi, bmiLabel, fmtTime, fmtPace, dayStart, weekStart, addDays, dayKey, streak, buckets
+    strideM, steps, bmi, bmiLabel, climbM, bmr, walkNetPerKm, tiltDeg, fmtTime, fmtPace, dayStart, weekStart, addDays, dayKey, streak, buckets
   };
   if (typeof module !== "undefined") module.exports = api; else root.CintaCore = api;
 })(this);

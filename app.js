@@ -46,6 +46,13 @@ const weekKcal = p => sessionsOf(p).filter(s => s.start >= weekFrom()).reduce((a
 const fmtDay = (ts, o) => new Date(ts).toLocaleDateString("es-AR", o);
 const fmtHour = ts => new Date(ts).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const climbOf = s => C.climbM(s.segs);
+const stepsOf = (s, p) => C.steps(s.km, p.height);
+// Afuera de la cinta: pasos por día cargados a mano (p.out = {dayKey: pasos}).
+const outSteps = (p, k) => ((p && p.out) || {})[k] || 0;
+const outKm = (p, st) => st * C.strideM(p.height) / 1000;
+const outKcal = (p, km) => C.walkNetPerKm(p.weight) * km;
+const outIn = (p, from, to) => Object.entries(p.out || {}).reduce((a, [k, v]) => { const t = keyTs(k); return t >= from && t < to ? a + v : a; }, 0);
 
 // ================= navegación =================
 function render() {
@@ -131,6 +138,8 @@ function renderHome() {
       }).join("")}</div>
     </div>
 
+    ${todayCard(p, ss)}
+
     <div class="duo">
       <div class="mini streak"><div class="lbl">${icon("flame", 14)}Racha</div><b class="num">${st}</b><div class="s">${st === 1 ? "día" : "días"} seguidos</div></div>
       <button class="mini" ${last ? `data-act="session" data-id="${last.id}"` : ""}><div class="lbl">${icon("clock", 14)}Última</div>
@@ -152,6 +161,7 @@ function renderHome() {
     const r = $("#s-home .ring");
     if (r) UI.setRing(r, wk / goal);
     UI.countUp($("#wk-k"), wk);
+    const tk = $("#td-k"); if (tk) UI.countUp(tk, +tk.dataset.v);
   });
 }
 function relDay(ts) {
@@ -161,13 +171,14 @@ function relDay(ts) {
 function deviceCard() {
   const st = ble.state;
   const txt = st === "on" ? "Conectada · lista" : st === "connecting" ? "Conectando…" : "Se conecta al empezar";
-  return `<button class="device ${st}" data-act="device">
+  return `<div class="dev-row"><button class="device ${st}" data-act="device">
     <span class="dev-ic">${icon("bt", 20)}</span>
     <div class="grow"><b>${esc(st === "on" ? ble.name : "Cinta")}</b><span class="st">${txt}</span></div>
-    <span class="dot"></span></button>`;
+    <span class="dot"></span></button>
+    <button class="lvl-btn" data-act="level" aria-label="Nivelador">${icon("level", 20)}<b class="num">${dec1(S.settings.pct)}<small>%</small></b></button></div>`;
 }
 function refreshDevice() {
-  const el = $("#s-home .device");
+  const el = $("#s-home .dev-row");
   if (el) el.outerHTML = deviceCard();
   updateLive();
 }
@@ -273,6 +284,8 @@ function renderProgress() {
       </div>
     </div>
 
+    ${splitCard(p, cur, info)}
+
     ${duelCard(p, info)}
 
     ${view.period === "day" ? `
@@ -293,7 +306,7 @@ function renderProgress() {
       <div class="heat-leg">Menos <i class="hm"></i><i class="hm l1"></i><i class="hm l2"></i><i class="hm l3"></i><i class="hm l4"></i> Más</div>
     </div>
 
-    ${ss.length ? tripCard(p, ss, sum(cur, s => s.km), info) + factCard(p, ss) : ""}
+    ${ss.length ? tripCard(p, ss, sum(cur, s => s.km), info) + climbCard(ss, cur, info) + factCard(p, ss) : ""}
 
     ${ss.length ? `
     <div class="h-sec"><h2>Récords</h2></div>
@@ -343,6 +356,173 @@ function rec(label, val, unit, s, ic) {
   return `<button class="rec" data-act="session" data-id="${s.id}">${icon(ic, 20)}<b class="num">${val}${unit ? `<small>${unit}</small>` : ""}</b><span>${label}</span><em>${fmtDay(s.start, { day: "numeric", month: "short", year: "numeric" })}</em></button>`;
 }
 
+
+// ================= hoy: cinta + afuera + reposo =================
+function todayCard(p, ss) {
+  const k = C.dayKey(Date.now());
+  const day = ss.filter(s => C.dayKey(s.start) === k);
+  const cK = day.reduce((a, s) => a + kcalOf(s, p), 0);
+  const cRest = isNet(p) ? 0 : day.reduce((a, s) => a + (s.gross - s.net), 0);   // el reposo ya contado en la cinta
+  const cKm = day.reduce((a, s) => a + s.km, 0), cSt = C.steps(cKm, p.height), cUp = day.reduce((a, s) => a + climbOf(s), 0);
+  const oSt = outSteps(p, k), oKm = outKm(p, oSt), oK = outKcal(p, oKm);
+  const frac = (Date.now() - C.dayStart(new Date()).getTime()) / 864e5;
+  const rest = Math.max(0, C.bmr(p.weight, p.height, p.age, p.sex) * frac - cRest);
+  const tot = cK + oK + rest;
+  const w = x => Math.max(0, x / (tot || 1) * 100).toFixed(1);
+  return `<div class="card today">
+    <div class="card-h"><span class="card-t">Hoy</span><span class="card-s">kcal del día</span></div>
+    <div class="td-top"><b class="num" id="td-k" data-v="${Math.round(tot)}">0</b><span>kcal</span></div>
+    <div class="td-bar"><i class="c" style="width:${w(cK)}%"></i><i class="o" style="width:${w(oK)}%"></i><i class="r" style="width:${w(rest)}%"></i></div>
+    <div class="td-leg"><span><i class="c"></i>Cinta <b class="num">${int(cK)}</b></span><span><i class="o"></i>Afuera <b class="num">${int(oK)}</b></span><span><i class="r"></i>Reposo <b class="num">${int(rest)}</b></span></div>
+    <div class="td-cols">
+      <div class="td-col c"><div class="lbl">${icon("steps", 14)}Cinta</div><b class="num">${int(cSt)}</b><span>pasos</span><em class="num">${dec1(cKm)} km · ↑ ${int(cUp)} m</em></div>
+      <button class="td-col o" data-act="out-steps"><div class="lbl">${icon("sun", 14)}Afuera${icon(oSt ? "edit" : "plus", 13, "td-ed")}</div><b class="num">${oSt ? int(oSt) : "—"}</b><span>pasos</span><em class="num">${oSt ? `${dec1(oKm)} km` : "Cargar"}</em></button>
+    </div>
+    ${oSt ? `<div class="td-tot">Total <b class="num">${int(cSt + oSt)}</b> pasos · <b class="num">${dec1(cKm + oKm)}</b> km</div>` : ""}
+  </div>`;
+}
+// Pasos afuera de la cinta: un navegador no puede leer el podómetro del celu, se copian de Google Fit.
+function outSheet(k) {
+  const p = me(), cur = outSteps(p, k);
+  const today = k === C.dayKey(Date.now());
+  const s = UI.pick({
+    title: today ? "Pasos afuera hoy" : `Pasos afuera · ${fmtDay(keyTs(k), { weekday: "short", day: "numeric" })}`, sep: ".", unit: "pasos",
+    columns: [{ values: UI.range(0, 60), value: Math.floor(cur / 1000), width: "72px" }, { values: UI.range(0, 9), value: Math.round(cur % 1000 / 100) % 10, format: v => v + "00", width: "86px" }],
+    onDone: ([a, b]) => {
+      p.out = Object.assign({}, p.out); const v = a * 1000 + b * 100;
+      if (v) p.out[k] = v; else delete p.out[k];
+      save.profiles(); render();
+    }
+  });
+  s.el.querySelector(".sheet-title").insertAdjacentHTML("afterend", `<div class="row-cap" style="text-align:center;margin:-6px 0 4px">Copialos de Google Fit sin contar los de la cinta.</div>`);
+}
+
+// Progreso: cinta (primero) vs afuera vs total
+function splitCard(p, cur, info) {
+  const cKm = cur.reduce((a, s) => a + s.km, 0), cK = cur.reduce((a, s) => a + kcalOf(s, p), 0), cSt = C.steps(cKm, p.height);
+  const oSt = outIn(p, info.from.getTime(), info.to.getTime()), oKm = outKm(p, oSt), oK = outKcal(p, oKm);
+  const dayK = view.period === "day" ? C.dayKey(info.from) : null;
+  if (!cur.length && !oSt && !dayK) return "";
+  const r = (cls, ic, l, st, km, kc, act) => `<${act ? `button ${act}` : "div"} class="sp-r ${cls}"><span class="sp-l">${icon(ic, 15)}${l}</span><b class="num">${st == null ? "—" : int(st)}</b><b class="num">${km == null ? "—" : dec1(km)}</b><b class="num">${kc == null ? "—" : int(kc)}</b></${act ? "button" : "div"}>`;
+  return `<div class="card split">
+    <div class="sp-r sp-h"><span></span><span>pasos</span><span>km</span><span>kcal</span></div>
+    ${r("c", "steps", "Cinta", cSt, cKm, cK)}
+    ${r("o", "sun", "Afuera", oSt || null, oSt ? oKm : null, oSt ? oK : null, dayK ? `data-act="out-steps" data-k="${dayK}"` : "")}
+    ${oSt ? r("t", "plus", "Total", cSt + oSt, cKm + oKm, cK + oK) : ""}
+  </div>`;
+}
+
+// ================= altura subida =================
+// [metros, corto, con artículo]
+const HEIGHTS = [[25, "Edificio de 8 pisos", "un edificio de 8 pisos"], [67.5, "Obelisco", "el Obelisco"], [139, "Pirámide de Keops", "la Pirámide de Keops"],
+  [330, "Torre Eiffel", "la Torre Eiffel"], [443, "Empire State", "el Empire State"], [634, "Tokyo Skytree", "el Tokyo Skytree"],
+  [828, "Burj Khalifa", "el Burj Khalifa"], [979, "Salto Ángel", "el Salto Ángel"], [2388, "Cerro Catedral", "el Cerro Catedral"],
+  [3776, "Monte Fuji", "el Monte Fuji"], [4810, "Mont Blanc", "el Mont Blanc"], [6961, "Aconcagua", "el Aconcagua"],
+  [8849, "Everest", "el Everest"], [11000, "Altura de un avión", "la altura de un avión"], [100000, "El espacio", "el espacio"]];
+const aL = t => t.startsWith("el ") ? "al " + t.slice(3) : "a " + t, deL = t => t.startsWith("el ") ? "del " + t.slice(3) : "de " + t;
+function heightInfo(m) {
+  let i = -1;
+  while (i + 1 < HEIGHTS.length && HEIGHTS[i + 1][0] <= m) i++;
+  const at = i >= 0 ? HEIGHTS[i] : null, next = HEIGHTS[i + 1] || null, from = at ? at[0] : 0;
+  return { i, at, next, pct: next ? (m - from) / (next[0] - from) : 1, left: next ? next[0] - m : 0 };
+}
+// Frase corta para una caminata: "Casi el Obelisco" / "Más que la Torre Eiffel" / "2,3 Obeliscos"
+function climbLine(m) {
+  const h = heightInfo(m);
+  if (m >= 135 && m < 330) return `${dec1(m / 67.5)} Obeliscos`;
+  if (h.at && (!h.next || h.pct < 0.8)) return `Más que ${h.at[2]}`;
+  return `${int(m / h.next[0] * 100)} % ${deL(h.next[2])}`;
+}
+function climbRow(label, m) {
+  const h = heightInfo(m);
+  return `<div class="trip-r">
+    <div class="trip-h"><span>${label}</span></div>
+    <div class="trip-d"><b class="num">${int(m)} m</b><span class="o">${h.at ? `· pasaste ${h.at[2]}` : ""}</span></div>
+    <div class="trip-bar climb"><i style="width:${Math.max(2, h.pct * 100)}%"></i></div>
+    <div class="trip-f"><span>${h.at ? h.at[1] : "Piso"}</span><span>${h.next ? `${int(Math.max(1, h.left))} m ${aL(h.next[2])}` : "Ya estás en el espacio"}</span></div>
+  </div>`;
+}
+function climbCard(ss, cur, info) {
+  const total = ss.reduce((a, s) => a + climbOf(s), 0);
+  if (total < 1) return "";
+  const per = cur.reduce((a, s) => a + climbOf(s), 0);
+  return `<div class="card trip climb-card">
+    <div class="card-h" style="margin:0"><span class="card-t">${icon("climb", 16)} Altura subida</span><span class="card-s">en la inclinada</span></div>
+    ${Math.abs(total - per) < 0.5 ? "" : climbRow(esc(info.title), per)}
+    ${climbRow("En total", total)}
+  </div>`;
+}
+
+// ================= nivelador =================
+// El celu acostado en la cinta. Paso 1: patitas abajo (marca el plano, así se anula el piso y el bulto de la cámara).
+// Paso 2: patitas arriba. La inclinación es el ángulo entre las dos lecturas de gravedad.
+function levelSheet() {
+  const DM = window.DeviceMotionEvent;
+  if (DM && typeof DM.requestPermission === "function") DM.requestPermission().catch(() => {});
+  const body = document.createElement("div");
+  body.className = "sheet-body level";
+  body.innerHTML = `<h3 class="sheet-title">Nivelador</h3>
+    <div class="lv-box">
+      <div class="lv-bub"><i class="lv-cross"></i><i class="lv-dot" id="lv-dot"></i></div>
+      <div class="lv-read"><div><b class="num" id="lv-pct">—</b><small>%</small></div><span class="num" id="lv-deg">Esperando el sensor…</span></div>
+    </div>
+    <div class="lv-steps"><div class="lv-st on" data-s="0"><i>1</i><span>Patitas <b>abajo</b>. Apoyá el celu acostado sobre la cinta.</span></div>
+      <div class="lv-st" data-s="1"><i>2</i><span>Subí las patitas sin mover el celu.</span></div></div>
+    <button class="btn btn-primary" id="lv-go" disabled>Marcar plano</button>
+    <div class="lv-links"><button id="lv-skip">Medir sin plano</button><button id="lv-man">Ajustar a mano</button></div>
+    <div class="lv-now">Ahora: <b class="num">${dec1(S.settings.pct)} %</b></div>`;
+  let step = 0, ref = null, cur = null, got = false;
+  const buf = [];
+  const $b = s => body.querySelector(s);
+  const go = $b("#lv-go");
+  const avg = () => { const n = buf.length, a = { x: 0, y: 0, z: 0 }; buf.forEach(v => { a.x += v.x / n; a.y += v.y / n; a.z += v.z / n; }); return a; };
+  const deg = () => buf.length ? C.tiltDeg(avg(), step === 1 ? ref : null) : null;
+  const pctOf = d => Math.tan(d * Math.PI / 180) * 100;
+  const stable = () => {
+    if (buf.length < 25) return false;
+    const ds = buf.slice(-25).map(v => C.tiltDeg(v, step === 1 ? ref : null));
+    return Math.max(...ds) - Math.min(...ds) < 0.6;
+  };
+  const draw = () => {
+    if (!got) return;
+    const d = deg(), ok = stable();
+    $b("#lv-pct").textContent = d == null ? "—" : dec1(pctOf(d));
+    $b("#lv-deg").textContent = d == null ? "" : `${dec1(d)}° · ${ok ? "quieto" : "esperando que quede quieto"}`;
+    const n = Math.hypot(cur.x, cur.y, cur.z) || 1, K = 46 / Math.sin(12 * Math.PI / 180);
+    const cl = v => Math.max(-46, Math.min(46, v));
+    $b("#lv-dot").style.transform = `translate(${cl(-cur.x / n * K)}px, ${cl(cur.y / n * K)}px)`;
+    body.classList.toggle("ok", ok);
+    go.disabled = !ok;
+    if (step === 1) go.textContent = d == null ? "Guardar" : `Guardar ${dec1(pctOf(d))} %`;
+  };
+  const onM = e => {
+    const g = e.accelerationIncludingGravity;
+    if (!g || g.x == null) return;
+    got = true; cur = { x: g.x, y: g.y, z: g.z };
+    buf.push(cur); if (buf.length > 40) buf.shift();
+  };
+  const toStep1 = r => {
+    ref = r; step = 1; buf.length = 0; haptic(15);
+    body.querySelectorAll(".lv-st").forEach(x => x.classList.toggle("on", x.dataset.s === "1"));
+    body.querySelector('.lv-st[data-s="0"]').classList.add("done");
+    $b("#lv-skip").hidden = true;
+    if (!r) $b('.lv-st[data-s="1"] span').textContent = "Con las patitas arriba, apoyá el celu acostado sobre la cinta.";
+    go.textContent = "Guardar"; go.disabled = true;
+  };
+  addEventListener("devicemotion", onM);
+  const iv = setInterval(draw, 150);
+  const noSensor = setTimeout(() => { if (!got) { $b("#lv-deg").textContent = "Este dispositivo no tiene sensor"; $b("#lv-skip").hidden = true; } }, 2000);
+  const s = UI.sheet(body, { onClose: () => { removeEventListener("devicemotion", onM); clearInterval(iv); clearTimeout(noSensor); } });
+  go.onclick = () => {
+    if (step === 0) return toStep1(avg());
+    const d = deg(); if (d == null) return;
+    S.settings.pct = Math.min(20, Math.round(pctOf(d) * 10) / 10); S.settings.levelAt = Date.now(); save.settings();
+    haptic([20, 40, 20]); s.close(); render(); updateLive();
+    UI.toast(`Inclinada: ${dec1(S.settings.pct)} %`);
+  };
+  $b("#lv-skip").onclick = () => toStep1(null);
+  $b("#lv-man").onclick = () => { s.close(); setTimeout(() => editField("pct"), 260); };
+}
 
 // ================= viaje y datos =================
 const HOME = "Villa Domínico";
@@ -710,6 +890,9 @@ function renderProfile() {
       ${row("cake", "Edad", `${p.age} años`, "age")}
       ${row("ruler", "Altura", `${p.height} cm`, "height")}
       ${row("scale", "Peso", `${dec1(p.weight)} kg`, "weight")}
+      <div class="row row-col"><div style="display:flex;align-items:center;gap:14px"><span class="ri">${icon("user", 18)}</span><span class="rl">Cuerpo</span></div>
+        ${UI.seg("sex", [{ v: "m", label: "Hombre" }, { v: "f", label: "Mujer" }], p.sex || "", "sex" + (p.sex ? "" : " none"))}
+        <div class="row-cap">Para calcular el gasto en reposo del día.</div></div>
       <div class="row row-col"><div style="display:flex;align-items:center;gap:14px"><span class="ri">${icon("palette", 18)}</span><span class="rl">Color</span></div>
         <div class="swatches">${COLORS.map(c => `<button class="sw ${c === p.color ? "on" : ""}" style="--c:${c}" data-act="color" data-v="${c}" aria-label="Color"></button>`).join("")}</div></div>
     </div>
@@ -731,8 +914,9 @@ function renderProfile() {
 
     <div class="group-t">Cinta</div>
     <div class="group">
-      ${row("mountain", "Inclinada", `${dec1(S.settings.pct)} %`, "pct")}
+      <button class="row" data-act="level"><span class="ri">${icon("level", 18)}</span><span class="rl">Inclinada</span><span class="rv">${dec1(S.settings.pct)} %</span>${icon("chevR", 18, "chev")}</button>
       ${row("target", "Meta planificada", `${S.settings.quickMin || 30} min`, "quick")}
+      ${row("gauge", "Arranque de la cinta", rampSec() ? `${rampSec()} s a 6 km/h` : "Al instante", "ramp")}
       <div class="row row-col"><div style="display:flex;align-items:center;gap:14px"><span class="ri">${icon("flat", 18)}</span><span class="rl">Arranca en</span></div>
         ${UI.seg("startmode", [{ v: "flat", label: "PLANO" }, { v: "inc", label: "INCLINADA" }], S.settings.startMode || "inc", "mode")}</div>
       <button class="row" data-act="diag"><span class="ri">${icon("bolt", 18)}</span><span class="rl">Diagnóstico</span>${icon("chevR", 18, "chev")}</button>
@@ -768,6 +952,7 @@ const PICK = {
     columns: [{ values: UI.range(0, 15), value: Math.floor(S.settings.pct), width: "70px" }, { values: UI.range(0, 9), value: Math.round((S.settings.pct % 1) * 10) % 10, width: "64px" }],
     onDone: ([x, y]) => done({ pct: x + y / 10 })
   }),
+  ramp: (_, done) => UI.pick({ title: "Segundos de 0 a 6 km/h", unit: "s", columns: [{ values: UI.range(0, 30), value: rampSec() }], onDone: ([v]) => done({ ramp: v }) }),
   quick: (_, done) => UI.pick({ title: "Meta planificada", unit: "min", columns: [{ values: UI.range(5, 180, 5), value: S.settings.quickMin || 30 }], onDone: ([m]) => done({ quick: m }) })
 };
 
@@ -775,6 +960,7 @@ function editField(f) {
   const p = me();
   if (f === "name") return nameSheet(p.name, name => { p.name = name; save.profiles(); render(); });
   PICK[f](p, ch => {
+    if (ch.ramp !== undefined) { S.settings.rampSec = ch.ramp; save.settings(); return render(); }
     if (ch.pct !== undefined || ch.quick !== undefined) {
       if (ch.pct !== undefined) S.settings.pct = ch.pct;
       if (ch.quick !== undefined) S.settings.quickMin = ch.quick;
@@ -823,6 +1009,7 @@ function newProfile() {
       <div style="display:flex;justify-content:center;margin:6px 0 4px"><span class="avatar lg" style="--c:${d.color}">${esc((d.name.trim()[0] || "?").toUpperCase())}</span></div>
       <input class="field" id="np-name" maxlength="24" placeholder="Nombre" value="${esc(d.name)}" autocomplete="off">
       <div class="swatches" style="justify-content:center;margin:6px 0">${COLORS.map(c => `<button class="sw ${c === d.color ? "on" : ""}" style="--c:${c}" data-c="${c}"></button>`).join("")}</div>
+      ${UI.seg("npsex", [{ v: "m", label: "Hombre" }, { v: "f", label: "Mujer" }], d.sex || "", "sex" + (d.sex ? "" : " none"))}
       <div class="group" style="margin:0">
         <button class="row" data-f="age"><span class="ri">${icon("cake", 18)}</span><span class="rl">Edad</span><span class="rv">${d.age} años</span>${icon("chevR", 18, "chev")}</button>
         <button class="row" data-f="height"><span class="ri">${icon("ruler", 18)}</span><span class="rl">Altura</span><span class="rv">${d.height} cm</span>${icon("chevR", 18, "chev")}</button>
@@ -832,10 +1019,11 @@ function newProfile() {
     const nm = body.querySelector("#np-name");
     nm.oninput = () => { d.name = nm.value; body.querySelector(".avatar").textContent = (d.name.trim()[0] || "?").toUpperCase(); };
     body.querySelectorAll("[data-c]").forEach(b => b.onclick = () => { d.color = b.dataset.c; haptic(6); draw(); });
+    body.querySelector('[data-seg="npsex"]').onclick = e => { const b = e.target.closest("button"); if (b) { d.sex = b.dataset.v; haptic(6); draw(); } };
     body.querySelectorAll("[data-f]").forEach(b => b.onclick = () => PICK[b.dataset.f](d, ch => { Object.assign(d, ch); draw(); }));
     body.querySelector("[data-save]").onclick = () => {
       if (!d.name.trim()) { nm.focus(); UI.toast("Poné un nombre"); return; }
-      const p = { id: uid(), name: d.name.trim(), color: d.color, age: d.age, height: d.height, weight: d.weight, goal: d.goal, kcalMode: "total", weights: [{ t: Date.now(), kg: d.weight }] };
+      const p = { id: uid(), name: d.name.trim(), color: d.color, sex: d.sex, age: d.age, height: d.height, weight: d.weight, goal: d.goal, kcalMode: "total", weights: [{ t: Date.now(), kg: d.weight }] };
       S.profiles.push(p); S.activeId = p.id;
       save.profiles(); save.active();
       s.close(); haptic(15); view.tab = "home"; render();
@@ -959,7 +1147,9 @@ function openSession(s, fresh = false) {
         <span><b class="num">${C.fmtPace(avg)}</b>min/km</span>
         <span><b class="num">${int(C.steps(s.km, p.height))}</b>pasos</span>
         <span><b class="num">${incPct}%</b>inclinada</span>
+        <span><b class="num">${int(climbOf(s))}<small>m</small></b>subidos</span>
       </div>
+      ${climbOf(s) >= 1 ? `<div class="sum-climb">${icon("climb", 15)}${climbLine(climbOf(s))}</div>` : ""}
       ${samples.length > 3 || segs.length > 1 ? `<div class="sum-chart">
         <div class="sc-h"><span>${samples.length > 3 ? `Velocidad · máx ${dec1(maxS)}` : "Tramos"}</span>${segs.length > 1 ? `<button data-tramos>${segs.length} tramos${icon("chevR", 14)}</button>` : ""}</div>
         ${samples.length > 3 ? `<div class="spd-chart sm">${UI.area(samples, { min: 0, max: Math.max(maxS * 1.15, 1), h: 70 })}</div>` : ""}
@@ -1361,6 +1551,8 @@ function buildLive() {
       <div class="live-stats">
         <div><span class="lbl">Distancia</span><b class="num" id="L-km">0,00</b><span class="u">km</span></div>
         <div><span class="lbl">Ritmo</span><b class="num" id="L-pace">--:--</b><span class="u">min/km</span></div>
+        <div><span class="lbl">Pasos</span><b class="num" id="L-steps">0</b><span class="u">pasos</span></div>
+        <div><span class="lbl">Subida</span><b class="num" id="L-up">0</b><span class="u">m</span></div>
       </div>
 
       ${UI.seg("lmode", [{ v: "flat", label: "PLANO" }, { v: "inc", label: "INCLINADA" }], "flat", "big mode")}
@@ -1469,7 +1661,7 @@ function updateLive() {
   if (!L || !$("#live").classList.contains("on")) return;
   const p = byId(L.profileId);
   const t = C.totals(L.segs);
-  const spd = ble.liveSpeed();
+  const spd = L.state === "running" ? Math.min(effV, ble.liveSpeed()) : 0;
   const moving = L.state === "running" && spd > 0;
   const kc = isNet(p) ? t.net : t.gross;
   const rateK = C.kcalPerMin(spd, gradeOf(L.mode), L.kg);
@@ -1487,6 +1679,8 @@ function updateLive() {
   $("#L-kw").textContent = isNet(p) ? "kcal netas" : "kcal";
   $("#L-km").textContent = dec2(liveKm(L, t));
   $("#L-pace").textContent = C.fmtPace(spd);
+  $("#L-steps").textContent = int(C.steps(liveKm(L, t), p.height));
+  $("#L-up").textContent = int(C.climbM(L.segs));
   // Intensidad en METs (consumo total / reposo): <3 suave, 3–6 moderada, ≥6 vigorosa.
   const mets = moving ? rateK.gross / (L.kg * 5 / 1000) / 3.5 : 0;
   const zi = mets < 3 ? 0 : mets < 6 ? 1 : 2;
@@ -1689,6 +1883,17 @@ async function discardLive() {
 
 // Motor: cada segundo suma lo recorrido a la velocidad real de la cinta.
 let lastTick = Date.now(), lastSave = 0;
+// La cinta informa la velocidad elegida apenas arranca (o reanuda), pero la banda tarda unos segundos en llegar.
+// La app sube de a poco a la aceleración de la cinta (settings.rampSec = segundos de 0 a 6 km/h). Al frenar informa la real.
+let effV = 0;
+const rampSec = () => S.settings.rampSec != null ? S.settings.rampSec : 10;
+function rampSpeed(L, dt) {
+  const raw = ble.liveSpeed();
+  if (L.state !== "running" || !(raw > 0)) return effV = 0;
+  const acc = rampSec() > 0 ? 6 / rampSec() : Infinity;
+  effV = raw > effV ? Math.min(raw, effV + acc * dt) : raw;
+  return Math.round(effV * 100) / 100;
+}
 function tick() {
   const now = Date.now();
   let dt = (now - lastTick) / 1000;
@@ -1696,7 +1901,7 @@ function tick() {
   if (dt > 3) dt = 0;   // la página estuvo congelada: el hueco lo recupera el contador de la cinta
   const L = S.live;
   if (!L) return;
-  const spd = ble.liveSpeed();
+  const spd = rampSpeed(L, dt);
   if (L.state === "running" && spd > 0) {
     C.addToSegments(L.segs, spd, gradeOf(L.mode), dt, L.kg);
     L.acc += dt;
@@ -1837,6 +2042,8 @@ document.addEventListener("click", e => {
     "delete-profile": deleteProfile,
     "update": () => checkUpdate(true),
     "diag": diagSheet,
+    "level": levelSheet,
+    "out-steps": () => outSheet(el.dataset.k || C.dayKey(Date.now())),
     "weigh": () => PICK.weight(me(), ch => { logWeight(me(), ch.weight); me().weight = ch.weight; save.profiles(); render(); UI.toast("Peso guardado"); }),
     "weigh-later": () => { me().weightSnooze = Date.now() + 864e5; save.profiles(); render(); },
     "live-min": hideLive,
@@ -1853,6 +2060,7 @@ document.addEventListener("click", e => {
     haptic(6);
     if (name === "period") { view.period = v; view.offset = 0; view.sel = -1; UI.setSeg(segBtn.parentElement, v); setTimeout(render, 180); }
     if (name === "startmode") { S.settings.startMode = v; save.settings(); UI.setSeg(segBtn.parentElement, v); }
+    if (name === "sex") { me().sex = v; save.profiles(); segBtn.parentElement.classList.remove("none"); UI.setSeg(segBtn.parentElement, v); }
     if (name === "kcalmode") { me().kcalMode = v; save.profiles(); UI.setSeg(segBtn.parentElement, v); setTimeout(render, 200); }
   }
   const bar = e.target.closest(".screen .bar");
@@ -1871,7 +2079,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.13";
+const VERSION = "1.14";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
