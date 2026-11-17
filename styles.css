@@ -925,15 +925,16 @@ html.land .cue { top: 50%; }
 .dg-empty { color: var(--t3); font-size: 14px; font-weight: 600; padding: 6px 0 10px; }
 
 /* ===== 1.14: hoy, afuera, altura, nivelador ===== */
-.dev-row { display: flex; gap: 10px; align-items: stretch; }
-.dev-row .device { flex: 1; min-width: 0; }
-.lvl-btn { flex: none; width: 78px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border-radius: 22px; background: var(--s1); border: 1px solid var(--line); color: var(--t2); transition: transform .15s var(--ease); }
+.dev-row { display: flex; gap: 10px; align-items: stretch; margin-bottom: 14px; }
+.dev-row .device { flex: 1; min-width: 0; margin-bottom: 0; }
+.dev-row .device span.st { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lvl-btn { flex: none; width: 70px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border-radius: 22px; background: var(--s1); border: 1px solid var(--line); color: var(--t2); transition: transform .15s var(--ease); }
 .lvl-btn:active { transform: scale(.95); }
 .lvl-btn b { font-size: 15px; font-weight: 800; color: var(--t1); letter-spacing: -.02em; }
 .lvl-btn b small { font-size: 11px; color: var(--t2); margin-left: 1px; }
 
-.today { padding: 20px; }
-.today .card-h { margin-bottom: 6px; }
+.card.today { padding: 20px; }
+.card.today .card-h { margin-bottom: 6px; }
 .td-top { display: flex; align-items: baseline; gap: 8px; }
 .td-top b { font-size: 40px; font-weight: 850; letter-spacing: -.045em; line-height: 1; }
 .td-top span { font-size: 14px; font-weight: 650; color: var(--t2); }

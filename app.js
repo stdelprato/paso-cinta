@@ -170,7 +170,7 @@ function relDay(ts) {
 }
 function deviceCard() {
   const st = ble.state;
-  const txt = st === "on" ? "Conectada · lista" : st === "connecting" ? "Conectando…" : "Se conecta al empezar";
+  const txt = st === "on" ? "Conectada · lista" : st === "connecting" ? "Conectando…" : "Conecta al empezar";
   return `<div class="dev-row"><button class="device ${st}" data-act="device">
     <span class="dev-ic">${icon("bt", 20)}</span>
     <div class="grow"><b>${esc(st === "on" ? ble.name : "Cinta")}</b><span class="st">${txt}</span></div>
@@ -2079,7 +2079,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.14";
+const VERSION = "1.14.1";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
