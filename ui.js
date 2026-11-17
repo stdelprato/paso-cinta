@@ -288,12 +288,13 @@ const UI = (() => {
     return `<div class="heat" style="--w:${weeks}">${cells}</div>`;
   }
 
-  function countUp(el, to, fmt = int, ms = 900) {
+  function countUp(el, to, fmt = int, ms = 900, from = 0) {
     if (!el) return;
+    if (Math.abs(to - from) < 0.5) { el.textContent = fmt(to); return; }
     const t0 = performance.now();
     const step = t => {
       const k = Math.min(1, (t - t0) / ms), e = 1 - Math.pow(1 - k, 3);
-      el.textContent = fmt(to * e);
+      el.textContent = fmt(from + (to - from) * e);
       if (k < 1) requestAnimationFrame(step);
     };
     requestAnimationFrame(step);

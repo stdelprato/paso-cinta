@@ -118,8 +118,8 @@ function renderHome() {
       <div class="card-h"><span class="card-t cap">${wTitle}</span>
         <div class="chips"><button class="chip-btn ${dSel ? "on" : ""}" data-act="home-v" data-v="day">Día</button><button class="chip-btn ${dSel ? "" : "on"}" data-act="home-v" data-v="week">Semana</button></div></div>
       <div class="week-main">
-        <div class="ring-box">${UI.ring({ pct: 0, size: 148, stroke: 14 })}
-          <div class="ring-in">${icon("flame", 18)}<b class="num" id="wk-k">0</b><span>${Math.round(wk / goal * 100)}% de ${int(goal)}</span></div>
+        <div class="ring-box">${UI.ring({ pct: HA.ring || 0, size: 148, stroke: 14 })}
+          <div class="ring-in">${icon("flame", 18)}<b class="num" id="wk-k">${int(HA.wk || 0)}</b><span>${Math.round(wk / goal * 100)}% de ${int(goal)}</span></div>
         </div>
         <div class="wk-stats">
           <div class="wk-stat"><span class="bub dist">${icon("route", 18)}</span><div><b class="num">${dec1(wkm)}</b><span>km</span></div></div>
@@ -133,7 +133,7 @@ function renderHome() {
       }).join("")}</div>
     </div>
 
-    ${todayCard(p, ss)}
+    ${todayCard(p, ss, dSel ? C.addDays(new Date(ws), hd) : new Date(), dSel ? wTitle : "Hoy")}
 
     <div class="duo">
       <div class="mini streak"><div class="lbl">${icon("flame", 14)}Racha</div><b class="num">${st}</b><div class="s">${st === 1 ? "día" : "días"} seguidos</div></div>
@@ -155,8 +155,10 @@ function renderHome() {
   requestAnimationFrame(() => {
     const r = $("#s-home .ring");
     if (r) UI.setRing(r, wk / goal);
-    UI.countUp($("#wk-k"), wk);
-    const tk = $("#td-k"); if (tk) UI.countUp(tk, +tk.dataset.v);
+    UI.countUp($("#wk-k"), wk, int, 700, HA.wk || 0);
+    const tk = $("#td-k"); if (tk) UI.countUp(tk, +tk.dataset.v, int, 700, HA.td || 0);
+    $$("#s-home .td-bar i").forEach(i => i.style.width = i.dataset.w + "%");
+    HA.ring = wk / goal; HA.wk = wk; HA.td = tk ? +tk.dataset.v : 0;
   });
 }
 function relDay(ts) {
@@ -350,21 +352,24 @@ function rec(label, val, unit, s, ic) {
 }
 
 
-// ================= hoy: cinta + reposo =================
-function todayCard(p, ss) {
-  const k = C.dayKey(Date.now());
+// ================= día: cinta + reposo =================
+// Último valor mostrado en Inicio: al cambiar de día los números van del valor anterior al nuevo (no vuelven a 0).
+const HA = {};
+function todayCard(p, ss, date, title) {
+  const k = C.dayKey(date);
+  const isToday = k === C.dayKey(Date.now());
   const day = ss.filter(s => C.dayKey(s.start) === k);
   const cK = day.reduce((a, s) => a + kcalOf(s, p), 0);
   const cRest = isNet(p) ? 0 : day.reduce((a, s) => a + (s.gross - s.net), 0);   // el reposo ya contado en la cinta
   const cKm = day.reduce((a, s) => a + s.km, 0), cSt = C.steps(cKm, p.height), cUp = day.reduce((a, s) => a + climbOf(s), 0);
-  const frac = (Date.now() - C.dayStart(new Date()).getTime()) / 864e5;
+  const frac = isToday ? (Date.now() - C.dayStart(new Date()).getTime()) / 864e5 : 1;
   const rest = Math.max(0, C.bmr(p.weight, p.height, p.age, p.sex) * frac - cRest);
   const tot = cK + rest;
   const w = x => Math.max(0, x / (tot || 1) * 100).toFixed(1);
   return `<div class="card today">
-    <div class="card-h"><span class="card-t">Hoy</span><span class="card-s">kcal del día</span></div>
-    <div class="td-top"><b class="num" id="td-k" data-v="${Math.round(tot)}">0</b><span>kcal</span></div>
-    <div class="td-bar"><i class="c" style="width:${w(cK)}%"></i><i class="r" style="width:${w(rest)}%"></i></div>
+    <div class="card-h"><span class="card-t cap">${esc(title)}</span><span class="card-s">kcal del día</span></div>
+    <div class="td-top"><b class="num" id="td-k" data-v="${Math.round(tot)}">${int(HA.td || 0)}</b><span>kcal</span></div>
+    <div class="td-bar"><i class="c" data-w="${w(cK)}" style="width:${HA.bc != null ? HA.bc : w(cK)}%"></i><i class="r" data-w="${w(rest)}" style="width:${HA.br != null ? HA.br : w(rest)}%"></i></div>${(HA.bc = w(cK), HA.br = w(rest), "")}
     <div class="td-leg"><span><i class="c"></i>Cinta <b class="num">${int(cK)}</b></span><span><i class="r"></i>Reposo <b class="num">${int(rest)}</b></span></div>
     <div class="td-stats">
       <div>${icon("steps", 15, "c-acc")}<b class="num">${int(cSt)}</b><span>pasos</span></div>
@@ -2040,7 +2045,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.14.2";
+const VERSION = "1.14.3";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
