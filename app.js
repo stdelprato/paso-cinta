@@ -48,11 +48,6 @@ const fmtHour = ts => new Date(ts).toLocaleTimeString("es-AR", { hour: "2-digit"
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const climbOf = s => C.climbM(s.segs);
 const stepsOf = (s, p) => C.steps(s.km, p.height);
-// Afuera de la cinta: pasos por día cargados a mano (p.out = {dayKey: pasos}).
-const outSteps = (p, k) => ((p && p.out) || {})[k] || 0;
-const outKm = (p, st) => st * C.strideM(p.height) / 1000;
-const outKcal = (p, km) => C.walkNetPerKm(p.weight) * km;
-const outIn = (p, from, to) => Object.entries(p.out || {}).reduce((a, [k, v]) => { const t = keyTs(k); return t >= from && t < to ? a + v : a; }, 0);
 
 // ================= navegación =================
 function render() {
@@ -280,11 +275,9 @@ function renderProgress() {
       <div class="kpis">
         <div class="kpi">${icon("route", 18, "c-dist")}<b class="num">${dec1(sum(cur, s => s.km))}</b><span>km</span></div>
         <div class="kpi">${icon("clock", 18, "c-time")}<b class="num">${durParts(sum(cur, s => s.sec))}</b><span>tiempo</span></div>
-        <div class="kpi">${icon("bolt", 18, "c-acc")}<b class="num">${cur.length}</b><span>caminatas</span></div>
+        <div class="kpi">${icon("steps", 18, "c-acc")}<b class="num">${int(C.steps(sum(cur, s => s.km), p.height))}</b><span>pasos</span></div>
       </div>
     </div>
-
-    ${splitCard(p, cur, info)}
 
     ${duelCard(p, info)}
 
@@ -357,58 +350,27 @@ function rec(label, val, unit, s, ic) {
 }
 
 
-// ================= hoy: cinta + afuera + reposo =================
+// ================= hoy: cinta + reposo =================
 function todayCard(p, ss) {
   const k = C.dayKey(Date.now());
   const day = ss.filter(s => C.dayKey(s.start) === k);
   const cK = day.reduce((a, s) => a + kcalOf(s, p), 0);
   const cRest = isNet(p) ? 0 : day.reduce((a, s) => a + (s.gross - s.net), 0);   // el reposo ya contado en la cinta
   const cKm = day.reduce((a, s) => a + s.km, 0), cSt = C.steps(cKm, p.height), cUp = day.reduce((a, s) => a + climbOf(s), 0);
-  const oSt = outSteps(p, k), oKm = outKm(p, oSt), oK = outKcal(p, oKm);
   const frac = (Date.now() - C.dayStart(new Date()).getTime()) / 864e5;
   const rest = Math.max(0, C.bmr(p.weight, p.height, p.age, p.sex) * frac - cRest);
-  const tot = cK + oK + rest;
+  const tot = cK + rest;
   const w = x => Math.max(0, x / (tot || 1) * 100).toFixed(1);
   return `<div class="card today">
     <div class="card-h"><span class="card-t">Hoy</span><span class="card-s">kcal del día</span></div>
     <div class="td-top"><b class="num" id="td-k" data-v="${Math.round(tot)}">0</b><span>kcal</span></div>
-    <div class="td-bar"><i class="c" style="width:${w(cK)}%"></i><i class="o" style="width:${w(oK)}%"></i><i class="r" style="width:${w(rest)}%"></i></div>
-    <div class="td-leg"><span><i class="c"></i>Cinta <b class="num">${int(cK)}</b></span><span><i class="o"></i>Afuera <b class="num">${int(oK)}</b></span><span><i class="r"></i>Reposo <b class="num">${int(rest)}</b></span></div>
-    <div class="td-cols">
-      <div class="td-col c"><div class="lbl">${icon("steps", 14)}Cinta</div><b class="num">${int(cSt)}</b><span>pasos</span><em class="num">${dec1(cKm)} km · ↑ ${int(cUp)} m</em></div>
-      <button class="td-col o" data-act="out-steps"><div class="lbl">${icon("sun", 14)}Afuera${icon(oSt ? "edit" : "plus", 13, "td-ed")}</div><b class="num">${oSt ? int(oSt) : "—"}</b><span>pasos</span><em class="num">${oSt ? `${dec1(oKm)} km` : "Cargar"}</em></button>
+    <div class="td-bar"><i class="c" style="width:${w(cK)}%"></i><i class="r" style="width:${w(rest)}%"></i></div>
+    <div class="td-leg"><span><i class="c"></i>Cinta <b class="num">${int(cK)}</b></span><span><i class="r"></i>Reposo <b class="num">${int(rest)}</b></span></div>
+    <div class="td-stats">
+      <div>${icon("steps", 15, "c-acc")}<b class="num">${int(cSt)}</b><span>pasos</span></div>
+      <div>${icon("route", 15, "c-dist")}<b class="num">${dec1(cKm)}</b><span>km</span></div>
+      <div>${icon("climb", 15, "c-k")}<b class="num">${int(cUp)}</b><span>m subidos</span></div>
     </div>
-    ${oSt ? `<div class="td-tot">Total <b class="num">${int(cSt + oSt)}</b> pasos · <b class="num">${dec1(cKm + oKm)}</b> km</div>` : ""}
-  </div>`;
-}
-// Pasos afuera de la cinta: un navegador no puede leer el podómetro del celu, se copian de Google Fit.
-function outSheet(k) {
-  const p = me(), cur = outSteps(p, k);
-  const today = k === C.dayKey(Date.now());
-  const s = UI.pick({
-    title: today ? "Pasos afuera hoy" : `Pasos afuera · ${fmtDay(keyTs(k), { weekday: "short", day: "numeric" })}`, sep: ".", unit: "pasos",
-    columns: [{ values: UI.range(0, 60), value: Math.floor(cur / 1000), width: "72px" }, { values: UI.range(0, 9), value: Math.round(cur % 1000 / 100) % 10, format: v => v + "00", width: "86px" }],
-    onDone: ([a, b]) => {
-      p.out = Object.assign({}, p.out); const v = a * 1000 + b * 100;
-      if (v) p.out[k] = v; else delete p.out[k];
-      save.profiles(); render();
-    }
-  });
-  s.el.querySelector(".sheet-title").insertAdjacentHTML("afterend", `<div class="row-cap" style="text-align:center;margin:-6px 0 4px">Copialos de Google Fit sin contar los de la cinta.</div>`);
-}
-
-// Progreso: cinta (primero) vs afuera vs total
-function splitCard(p, cur, info) {
-  const cKm = cur.reduce((a, s) => a + s.km, 0), cK = cur.reduce((a, s) => a + kcalOf(s, p), 0), cSt = C.steps(cKm, p.height);
-  const oSt = outIn(p, info.from.getTime(), info.to.getTime()), oKm = outKm(p, oSt), oK = outKcal(p, oKm);
-  const dayK = view.period === "day" ? C.dayKey(info.from) : null;
-  if (!cur.length && !oSt && !dayK) return "";
-  const r = (cls, ic, l, st, km, kc, act) => `<${act ? `button ${act}` : "div"} class="sp-r ${cls}"><span class="sp-l">${icon(ic, 15)}${l}</span><b class="num">${st == null ? "—" : int(st)}</b><b class="num">${km == null ? "—" : dec1(km)}</b><b class="num">${kc == null ? "—" : int(kc)}</b></${act ? "button" : "div"}>`;
-  return `<div class="card split">
-    <div class="sp-r sp-h"><span></span><span>pasos</span><span>km</span><span>kcal</span></div>
-    ${r("c", "steps", "Cinta", cSt, cKm, cK)}
-    ${r("o", "sun", "Afuera", oSt || null, oSt ? oKm : null, oSt ? oK : null, dayK ? `data-act="out-steps" data-k="${dayK}"` : "")}
-    ${oSt ? r("t", "plus", "Total", cSt + oSt, cKm + oKm, cK + oK) : ""}
   </div>`;
 }
 
@@ -2043,7 +2005,6 @@ document.addEventListener("click", e => {
     "update": () => checkUpdate(true),
     "diag": diagSheet,
     "level": levelSheet,
-    "out-steps": () => outSheet(el.dataset.k || C.dayKey(Date.now())),
     "weigh": () => PICK.weight(me(), ch => { logWeight(me(), ch.weight); me().weight = ch.weight; save.profiles(); render(); UI.toast("Peso guardado"); }),
     "weigh-later": () => { me().weightSnooze = Date.now() + 864e5; save.profiles(); render(); },
     "live-min": hideLive,
@@ -2079,7 +2040,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.14.1";
+const VERSION = "1.14.2";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);

@@ -83,8 +83,6 @@
   }, 0);
   // Metabolismo basal (Mifflin-St Jeor), kcal/día. sex: "m" | "f" | otro = promedio.
   const bmr = (kg, cm, age, sex) => 10 * kg + 6.25 * (cm || 170) - 5 * (age || 30) + (sex === "m" ? 5 : sex === "f" ? -161 : -78);
-  // Caminar en plano (ACSM): las kcal netas por km no dependen de la velocidad = 0,5 × kg.
-  const walkNetPerKm = kg => 0.5 * kg;
   // Inclinación medida con el acelerómetro: ángulo entre dos vectores de gravedad (o contra la vertical).
   function tiltDeg(v, ref) {
     const n = a => Math.hypot(a.x, a.y, a.z);
@@ -136,7 +134,7 @@
 
   const api = {
     parseTreadmillData, CMD, gradeFromDeg, kcalPerMin, addToSegments, totals,
-    strideM, steps, bmi, bmiLabel, climbM, bmr, walkNetPerKm, tiltDeg, fmtTime, fmtPace, dayStart, weekStart, addDays, dayKey, streak, buckets
+    strideM, steps, bmi, bmiLabel, climbM, bmr, tiltDeg, fmtTime, fmtPace, dayStart, weekStart, addDays, dayKey, streak, buckets
   };
   if (typeof module !== "undefined") module.exports = api; else root.CintaCore = api;
 })(this);
