@@ -59,7 +59,7 @@
     const t = { sec: 0, km: 0, net: 0, gross: 0, incSec: 0 };
     for (const s of segs) {
       t.sec += s.sec; t.km += s.km; t.net += s.net; t.gross += s.gross;
-      if (s.grade > 0) t.incSec += s.sec;
+      if (isInc(s.grade)) t.incSec += s.sec;
     }
     return t;
   }
@@ -83,15 +83,8 @@
   }, 0);
   // Metabolismo basal (Mifflin-St Jeor), kcal/día. sex: "m" | "f" | otro = promedio.
   const bmr = (kg, cm, age, sex) => 10 * kg + 6.25 * (cm || 170) - 5 * (age || 30) + (sex === "m" ? 5 : sex === "f" ? -161 : -78);
-  // Inclinación medida con el acelerómetro: ángulo entre dos vectores de gravedad (o contra la vertical).
-  function tiltDeg(v, ref) {
-    const n = a => Math.hypot(a.x, a.y, a.z);
-    const nv = n(v);
-    if (!nv) return null;
-    if (!ref) return Math.acos(Math.min(1, Math.abs(v.z) / nv)) * 180 / Math.PI;
-    const d = (v.x * ref.x + v.y * ref.y + v.z * ref.z) / (nv * n(ref));
-    return Math.acos(Math.max(-1, Math.min(1, d))) * 180 / Math.PI;
-  }
+  // Inclinada vs plano: viejas 0 / 6,3 %, nuevas 2,7 / 7,4 %.
+  const isInc = g => (g || 0) > 0.05;
 
   // ---------- tiempo ----------
   function fmtTime(sec) {
@@ -134,7 +127,7 @@
 
   const api = {
     parseTreadmillData, CMD, gradeFromDeg, kcalPerMin, addToSegments, totals,
-    strideM, steps, bmi, bmiLabel, climbM, bmr, tiltDeg, fmtTime, fmtPace, dayStart, weekStart, addDays, dayKey, streak, buckets
+    strideM, steps, bmi, bmiLabel, climbM, bmr, isInc, fmtTime, fmtPace, dayStart, weekStart, addDays, dayKey, streak, buckets
   };
   if (typeof module !== "undefined") module.exports = api; else root.CintaCore = api;
 })(this);

@@ -14,7 +14,7 @@ const S = {
   profiles: store.get("profiles", []),
   activeId: store.get("active", null),
   sessions: store.get("sessions", []),
-  settings: Object.assign({ pct: 6.3, lastMode: "flat", burn: "h", lastSpeed: 5, quickMin: 30, startMode: "inc" }, store.get("settings", {})),
+  settings: Object.assign({ lastMode: "flat", burn: "h", lastSpeed: 5, quickMin: 30, startMode: "inc" }, store.get("settings", {})),
   live: store.get("live", null),
   plans: store.get("plans", [])
 };
@@ -39,8 +39,10 @@ const kcalWord = p => isNet(p) ? "kcal netas" : "kcal";
 const firstName = p => ((p && p.name) || "").trim().split(/\s+/)[0] || "";
 const initial = p => (((p && p.name) || "?").trim()[0] || "?").toUpperCase();
 const avatar = (p, cls = "") => `<span class="avatar ${cls}" style="--c:${p.color}">${esc(initial(p))}</span>`;
-const incGrade = () => (S.settings.pct || 6.3) / 100;
-const gradeOf = mode => mode === "inc" ? incGrade() : 0;
+// Inclinación real medida (celu calibrado, promedio girándolo 180°): el piso no es plano.
+const FLAT_PCT = 2.7, INC_PCT = 7.4;
+const incGrade = () => INC_PCT / 100;
+const gradeOf = mode => mode === "inc" ? incGrade() : FLAT_PCT / 100;
 const weekFrom = () => C.weekStart(new Date()).getTime();
 const weekKcal = p => sessionsOf(p).filter(s => s.start >= weekFrom()).reduce((a, s) => a + kcalOf(s, p), 0);
 const fmtDay = (ts, o) => new Date(ts).toLocaleDateString("es-AR", o);
@@ -171,8 +173,7 @@ function deviceCard() {
   return `<div class="dev-row"><button class="device ${st}" data-act="device">
     <span class="dev-ic">${icon("bt", 20)}</span>
     <div class="grow"><b>${esc(st === "on" ? ble.name : "Cinta")}</b><span class="st">${txt}</span></div>
-    <span class="dot"></span></button>
-    <button class="lvl-btn" data-act="level" aria-label="Nivelador">${icon("level", 20)}<b class="num">${dec1(S.settings.pct)}<small>%</small></b></button></div>`;
+    <span class="dot"></span></button></div>`;
 }
 function refreshDevice() {
   const el = $("#s-home .dev-row");
@@ -430,81 +431,10 @@ function climbCard(ss, cur, info) {
   if (total < 1) return "";
   const per = cur.reduce((a, s) => a + climbOf(s), 0);
   return `<div class="card trip climb-card">
-    <div class="card-h" style="margin:0"><span class="card-t">${icon("climb", 16)} Altura subida</span><span class="card-s">en la inclinada</span></div>
+    <div class="card-h" style="margin:0"><span class="card-t">${icon("climb", 16)} Altura subida</span><span class="card-s">en la cinta</span></div>
     ${Math.abs(total - per) < 0.5 ? "" : climbRow(esc(info.title), per)}
     ${climbRow("En total", total)}
   </div>`;
-}
-
-// ================= nivelador =================
-// El celu acostado en la cinta. Paso 1: patitas abajo (marca el plano, así se anula el piso y el bulto de la cámara).
-// Paso 2: patitas arriba. La inclinación es el ángulo entre las dos lecturas de gravedad.
-function levelSheet() {
-  const DM = window.DeviceMotionEvent;
-  if (DM && typeof DM.requestPermission === "function") DM.requestPermission().catch(() => {});
-  const body = document.createElement("div");
-  body.className = "sheet-body level";
-  body.innerHTML = `<h3 class="sheet-title">Nivelador</h3>
-    <div class="lv-box">
-      <div class="lv-bub"><i class="lv-cross"></i><i class="lv-dot" id="lv-dot"></i></div>
-      <div class="lv-read"><div><b class="num" id="lv-pct">—</b><small>%</small></div><span class="num" id="lv-deg">Esperando el sensor…</span></div>
-    </div>
-    <div class="lv-steps"><div class="lv-st on" data-s="0"><i>1</i><span>Patitas <b>abajo</b>. Apoyá el celu acostado sobre la cinta.</span></div>
-      <div class="lv-st" data-s="1"><i>2</i><span>Subí las patitas sin mover el celu.</span></div></div>
-    <button class="btn btn-primary" id="lv-go" disabled>Marcar plano</button>
-    <div class="lv-links"><button id="lv-skip">Medir sin plano</button><button id="lv-man">Ajustar a mano</button></div>
-    <div class="lv-now">Ahora: <b class="num">${dec1(S.settings.pct)} %</b></div>`;
-  let step = 0, ref = null, cur = null, got = false;
-  const buf = [];
-  const $b = s => body.querySelector(s);
-  const go = $b("#lv-go");
-  const avg = () => { const n = buf.length, a = { x: 0, y: 0, z: 0 }; buf.forEach(v => { a.x += v.x / n; a.y += v.y / n; a.z += v.z / n; }); return a; };
-  const deg = () => buf.length ? C.tiltDeg(avg(), step === 1 ? ref : null) : null;
-  const pctOf = d => Math.tan(d * Math.PI / 180) * 100;
-  const stable = () => {
-    if (buf.length < 25) return false;
-    const ds = buf.slice(-25).map(v => C.tiltDeg(v, step === 1 ? ref : null));
-    return Math.max(...ds) - Math.min(...ds) < 0.6;
-  };
-  const draw = () => {
-    if (!got) return;
-    const d = deg(), ok = stable();
-    $b("#lv-pct").textContent = d == null ? "—" : dec1(pctOf(d));
-    $b("#lv-deg").textContent = d == null ? "" : `${dec1(d)}° · ${ok ? "quieto" : "esperando que quede quieto"}`;
-    const n = Math.hypot(cur.x, cur.y, cur.z) || 1, K = 46 / Math.sin(12 * Math.PI / 180);
-    const cl = v => Math.max(-46, Math.min(46, v));
-    $b("#lv-dot").style.transform = `translate(${cl(-cur.x / n * K)}px, ${cl(cur.y / n * K)}px)`;
-    body.classList.toggle("ok", ok);
-    go.disabled = !ok;
-    if (step === 1) go.textContent = d == null ? "Guardar" : `Guardar ${dec1(pctOf(d))} %`;
-  };
-  const onM = e => {
-    const g = e.accelerationIncludingGravity;
-    if (!g || g.x == null) return;
-    got = true; cur = { x: g.x, y: g.y, z: g.z };
-    buf.push(cur); if (buf.length > 40) buf.shift();
-  };
-  const toStep1 = r => {
-    ref = r; step = 1; buf.length = 0; haptic(15);
-    body.querySelectorAll(".lv-st").forEach(x => x.classList.toggle("on", x.dataset.s === "1"));
-    body.querySelector('.lv-st[data-s="0"]').classList.add("done");
-    $b("#lv-skip").hidden = true;
-    if (!r) $b('.lv-st[data-s="1"] span').textContent = "Con las patitas arriba, apoyá el celu acostado sobre la cinta.";
-    go.textContent = "Guardar"; go.disabled = true;
-  };
-  addEventListener("devicemotion", onM);
-  const iv = setInterval(draw, 150);
-  const noSensor = setTimeout(() => { if (!got) { $b("#lv-deg").textContent = "Este dispositivo no tiene sensor"; $b("#lv-skip").hidden = true; } }, 2000);
-  const s = UI.sheet(body, { onClose: () => { removeEventListener("devicemotion", onM); clearInterval(iv); clearTimeout(noSensor); } });
-  go.onclick = () => {
-    if (step === 0) return toStep1(avg());
-    const d = deg(); if (d == null) return;
-    S.settings.pct = Math.min(20, Math.round(pctOf(d) * 10) / 10); S.settings.levelAt = Date.now(); save.settings();
-    haptic([20, 40, 20]); s.close(); render(); updateLive();
-    UI.toast(`Inclinada: ${dec1(S.settings.pct)} %`);
-  };
-  $b("#lv-skip").onclick = () => toStep1(null);
-  $b("#lv-man").onclick = () => { s.close(); setTimeout(() => editField("pct"), 260); };
 }
 
 // ================= viaje y datos =================
@@ -551,7 +481,7 @@ function facts(p, ss) {
   const F = [`${n(km * 10)} cuadras caminadas en total.`, `${n(C.steps(km, p.height))} pasos desde que usás Paso.`];
   const H = [[67.5, "el Obelisco"], [330, "la Torre Eiffel"], [828, "el Burj Khalifa"], [2388, "el Cerro Catedral"], [6961, "el Aconcagua"], [8849, "el Everest"]];
   const h = H.filter(x => x[0] <= climb).pop();
-  if (climb >= 1) F.push(h ? `Subiste ${n(climb)} m en la inclinada: ${climb / h[0] >= 2 ? dec1(climb / h[0]) + " veces " : ""}${h[1]}.` : `Subiste ${n(climb)} m en la inclinada. El Obelisco mide 67.`);
+  if (climb >= 1) F.push(h ? `Subiste ${n(climb)} m: ${climb / h[0] >= 2 ? dec1(climb / h[0]) + " veces " : ""}${h[1]}.` : `Subiste ${n(climb)} m. El Obelisco mide 67.`);
   F.push(km >= 42.195 ? `Llevás ${dec1(km / 42.195)} maratones.` : `Te faltan ${dec1(42.195 - km)} km para tu primera maratón.`);
   F.push(`La banda de la cinta dio unas ${n(km * 1000 / 2.6)} vueltas.`);
   if (kc >= 120) F.push(`Quemaste ${n(kc / 120)} medialunas.`);
@@ -726,7 +656,7 @@ function restoreFrom(p, oldId, mm, bb) {
       const segs = [];
       C.addToSegments(segs, km / (sec / 3600), gradeOf(mode), sec, kg);
       const start = keyTs(k) + 12 * 3600e3;
-      sess.push({ id: uid(), profileId: oldId, source: "manual", recovered: true, kg, pct: S.settings.pct, samples: [], segs, ...C.totals(segs), start, end: start + sec * 1000 });
+      sess.push({ id: uid(), profileId: oldId, source: "manual", recovered: true, kg, pct: INC_PCT, flatPct: FLAT_PCT, samples: [], segs, ...C.totals(segs), start, end: start + sec * 1000 });
     });
   }
   const newId = p.id;
@@ -897,7 +827,6 @@ function renderProfile() {
 
     <div class="group-t">Cinta</div>
     <div class="group">
-      <button class="row" data-act="level"><span class="ri">${icon("level", 18)}</span><span class="rl">Inclinada</span><span class="rv">${dec1(S.settings.pct)} %</span>${icon("chevR", 18, "chev")}</button>
       ${row("target", "Meta planificada", `${S.settings.quickMin || 30} min`, "quick")}
       ${row("gauge", "Arranque de la cinta", rampSec() ? `${rampSec()} s a 6 km/h` : "Al instante", "ramp")}
       <div class="row row-col"><div style="display:flex;align-items:center;gap:14px"><span class="ri">${icon("flat", 18)}</span><span class="rl">Arranca en</span></div>
@@ -930,11 +859,6 @@ const PICK = {
     onDone: ([a, b]) => done({ weight: a + b / 10 })
   }),
   goal: (v, done) => UI.pick({ title: "Meta semanal", columns: [{ values: UI.range(500, 10000, 100), value: Math.round((v.goal || 2000) / 100) * 100, format: int, width: "130px" }], unit: "kcal", onDone: ([g]) => done({ goal: g }) }),
-  pct: (_, done) => UI.pick({
-    title: "Inclinación (INCLINADA)", sep: ",", unit: "%",
-    columns: [{ values: UI.range(0, 15), value: Math.floor(S.settings.pct), width: "70px" }, { values: UI.range(0, 9), value: Math.round((S.settings.pct % 1) * 10) % 10, width: "64px" }],
-    onDone: ([x, y]) => done({ pct: x + y / 10 })
-  }),
   ramp: (_, done) => UI.pick({ title: "Segundos de 0 a 6 km/h", unit: "s", columns: [{ values: UI.range(0, 30), value: rampSec() }], onDone: ([v]) => done({ ramp: v }) }),
   quick: (_, done) => UI.pick({ title: "Meta planificada", unit: "min", columns: [{ values: UI.range(5, 180, 5), value: S.settings.quickMin || 30 }], onDone: ([m]) => done({ quick: m }) })
 };
@@ -944,8 +868,7 @@ function editField(f) {
   if (f === "name") return nameSheet(p.name, name => { p.name = name; save.profiles(); render(); });
   PICK[f](p, ch => {
     if (ch.ramp !== undefined) { S.settings.rampSec = ch.ramp; save.settings(); return render(); }
-    if (ch.pct !== undefined || ch.quick !== undefined) {
-      if (ch.pct !== undefined) S.settings.pct = ch.pct;
+    if (ch.quick !== undefined) {
       if (ch.quick !== undefined) S.settings.quickMin = ch.quick;
       save.settings();
     }
@@ -1136,7 +1059,7 @@ function openSession(s, fresh = false) {
       ${samples.length > 3 || segs.length > 1 ? `<div class="sum-chart">
         <div class="sc-h"><span>${samples.length > 3 ? `Velocidad · máx ${dec1(maxS)}` : "Tramos"}</span>${segs.length > 1 ? `<button data-tramos>${segs.length} tramos${icon("chevR", 14)}</button>` : ""}</div>
         ${samples.length > 3 ? `<div class="spd-chart sm">${UI.area(samples, { min: 0, max: Math.max(maxS * 1.15, 1), h: 70 })}</div>` : ""}
-        <div class="segs-list" hidden>${segs.map(g => `<div class="sg"><i class="m ${g.grade > 0 ? "inc" : ""}"></i><div class="a num">${dec1(g.speed)} km/h<span>${g.grade > 0 ? "Inclinada" : "Plano"}</span></div><div class="b num">${C.fmtTime(g.sec)}<span>${int(isNet(p) ? g.net : g.gross)} kcal</span></div></div>`).join("")}</div>
+        <div class="segs-list" hidden>${segs.map(g => `<div class="sg"><i class="m ${C.isInc(g.grade) ? "inc" : ""}"></i><div class="a num">${dec1(g.speed)} km/h<span>${C.isInc(g.grade) ? "Inclinada" : "Plano"}</span></div><div class="b num">${C.fmtTime(g.sec)}<span>${int(isNet(p) ? g.net : g.gross)} kcal</span></div></div>`).join("")}</div>
       </div>` : ""}
       <div class="sum-act"><button class="btn btn-primary" data-close>${fresh ? "Listo" : "Cerrar"}</button><button class="icon-btn ed" data-edit aria-label="Editar caminata">${icon("edit", 20)}</button><button class="icon-btn del" data-del aria-label="Eliminar caminata">${icon("trash", 20)}</button></div>
     </div>`;
@@ -1827,7 +1750,7 @@ async function finishLive() {
   releaseAwake();
   hideLive();
   if (t.sec < 20) { UI.toast("Fue muy corta, no se guardó"); return; }
-  const s = { id: L.id, profileId: L.profileId, start: L.start, end: Date.now(), source: "ble", kg: L.kg, pct: S.settings.pct, segs: L.segs, samples: L.samples, ...t };
+  const s = { id: L.id, profileId: L.profileId, start: L.start, end: Date.now(), source: "ble", kg: L.kg, pct: INC_PCT, flatPct: FLAT_PCT, segs: L.segs, samples: L.samples, ...t };
   const names = [...new Set(L.planNames || [])];
   if (names.length) s.planName = names.join(" + ");
   if (L.hits && L.hits.length) s.hits = L.hits;
@@ -2025,7 +1948,6 @@ document.addEventListener("click", e => {
     "delete-profile": deleteProfile,
     "update": () => checkUpdate(true),
     "diag": diagSheet,
-    "level": levelSheet,
     "weigh": () => PICK.weight(me(), ch => { logWeight(me(), ch.weight); me().weight = ch.weight; save.profiles(); render(); UI.toast("Peso guardado"); }),
     "weigh-later": () => { me().weightSnooze = Date.now() + 864e5; save.profiles(); render(); },
     "live-min": hideLive,
@@ -2061,7 +1983,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.14.5";
+const VERSION = "1.15";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
