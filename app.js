@@ -352,25 +352,29 @@ function rec(label, val, unit, s, ic) {
 }
 
 
-// ================= día: cinta + reposo =================
+// ================= día: cinta + resto del día =================
 // Último valor mostrado en Inicio: al cambiar de día los números van del valor anterior al nuevo (no vuelven a 0).
 const HA = {};
+const DAY_FACTOR = 1.3;   // entre sedentario (1,2) y liviano (1,375); la cinta se suma aparte
 function todayCard(p, ss, date, title) {
   const k = C.dayKey(date);
   const isToday = k === C.dayKey(Date.now());
   const day = ss.filter(s => C.dayKey(s.start) === k);
   const cK = day.reduce((a, s) => a + kcalOf(s, p), 0);
-  const cRest = isNet(p) ? 0 : day.reduce((a, s) => a + (s.gross - s.net), 0);   // el reposo ya contado en la cinta
   const cKm = day.reduce((a, s) => a + s.km, 0), cSt = C.steps(cKm, p.height), cUp = day.reduce((a, s) => a + climbOf(s), 0);
-  const frac = isToday ? (Date.now() - C.dayStart(new Date()).getTime()) / 864e5 : 1;
-  const rest = Math.max(0, C.bmr(p.weight, p.height, p.age, p.sex) * frac - cRest);
+  // Resto del día = vida diaria liviana (basal × DAY_FACTOR: cocinar, bañarse, hacer compras) fuera del tiempo en la cinta.
+  // En la cinta: Totales ya trae su reposo; Netas no, así que ese rato suma el basal.
+  const bmrSec = C.bmr(p.weight, p.height, p.age, p.sex) / 86400;
+  const walkSec = day.reduce((a, s) => a + s.sec, 0);
+  const elapsed = isToday ? (Date.now() - C.dayStart(new Date()).getTime()) / 1000 : 86400;
+  const rest = Math.max(0, bmrSec * DAY_FACTOR * (elapsed - walkSec) + (isNet(p) ? bmrSec * walkSec : 0));
   const tot = cK + rest;
   const w = x => Math.max(0, x / (tot || 1) * 100).toFixed(1);
   return `<div class="card today">
     <div class="card-h"><span class="card-t cap">${esc(title)}</span><span class="card-s">kcal del día</span></div>
     <div class="td-top"><b class="num" id="td-k" data-v="${Math.round(tot)}">${int(HA.td || 0)}</b><span>kcal</span></div>
     <div class="td-bar"><i class="c" data-w="${w(cK)}" style="width:${HA.bc != null ? HA.bc : w(cK)}%"></i><i class="r" data-w="${w(rest)}" style="width:${HA.br != null ? HA.br : w(rest)}%"></i></div>${(HA.bc = w(cK), HA.br = w(rest), "")}
-    <div class="td-leg"><span><i class="c"></i>Cinta <b class="num">${int(cK)}</b></span><span><i class="r"></i>Reposo <b class="num">${int(rest)}</b></span></div>
+    <div class="td-leg"><span><i class="c"></i>Cinta <b class="num">${int(cK)}</b></span><span><i class="r"></i>Resto del día <b class="num">${int(rest)}</b></span></div>
     <div class="td-stats">
       <div>${icon("steps", 15, "c-acc")}<b class="num">${int(cSt)}</b><span>pasos</span></div>
       <div>${icon("route", 15, "c-dist")}<b class="num">${dec1(cKm)}</b><span>km</span></div>
@@ -859,7 +863,7 @@ function renderProfile() {
       ${row("scale", "Peso", `${dec1(p.weight)} kg`, "weight")}
       <div class="row row-col"><div style="display:flex;align-items:center;gap:14px"><span class="ri">${icon("user", 18)}</span><span class="rl">Cuerpo</span></div>
         ${UI.seg("sex", [{ v: "m", label: "Hombre" }, { v: "f", label: "Mujer" }], p.sex || "", "sex" + (p.sex ? "" : " none"))}
-        <div class="row-cap">Para calcular el gasto en reposo del día.</div></div>
+        <div class="row-cap">Para calcular el gasto del día.</div></div>
       <div class="row row-col"><div style="display:flex;align-items:center;gap:14px"><span class="ri">${icon("palette", 18)}</span><span class="rl">Color</span></div>
         <div class="swatches">${COLORS.map(c => `<button class="sw ${c === p.color ? "on" : ""}" style="--c:${c}" data-act="color" data-v="${c}" aria-label="Color"></button>`).join("")}</div></div>
     </div>
@@ -2045,7 +2049,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.14.3";
+const VERSION = "1.14.4";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
