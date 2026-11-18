@@ -385,30 +385,42 @@ function todayCard(p, ss, date, title) {
 
 // ================= altura subida =================
 // [metros, corto, con artículo]
-const HEIGHTS = [[25, "Edificio de 8 pisos", "un edificio de 8 pisos"], [67.5, "Obelisco", "el Obelisco"], [139, "Pirámide de Keops", "la Pirámide de Keops"],
-  [330, "Torre Eiffel", "la Torre Eiffel"], [443, "Empire State", "el Empire State"], [634, "Tokyo Skytree", "el Tokyo Skytree"],
-  [828, "Burj Khalifa", "el Burj Khalifa"], [979, "Salto Ángel", "el Salto Ángel"], [2388, "Cerro Catedral", "el Cerro Catedral"],
-  [3776, "Monte Fuji", "el Monte Fuji"], [4810, "Mont Blanc", "el Mont Blanc"], [6961, "Aconcagua", "el Aconcagua"],
-  [8849, "Everest", "el Everest"], [11000, "Altura de un avión", "la altura de un avión"], [100000, "El espacio", "el espacio"]];
+const HEIGHTS = [[10, "Casa de 3 pisos", "una casa de 3 pisos"], [25, "Edificio de 8 pisos", "un edificio de 8 pisos"],
+  [38, "Cristo Redentor", "el Cristo Redentor"], [56, "Torre de Pisa", "la Torre de Pisa"], [67.5, "Obelisco", "el Obelisco"],
+  [93, "Estatua de la Libertad", "la Estatua de la Libertad"], [96, "Big Ben", "el Big Ben"], [100, "Palacio Barolo", "el Palacio Barolo"],
+  [120, "Edificio Kavanagh", "el Edificio Kavanagh"], [135, "London Eye", "el London Eye"], [139, "Pirámide de Keops", "la Pirámide de Keops"],
+  [172, "Sagrada Familia", "la Sagrada Familia"], [239, "Alvear Tower", "la Alvear Tower"], [330, "Torre Eiffel", "la Torre Eiffel"],
+  [443, "Empire State", "el Empire State"], [541, "One World Trade Center", "el One World Trade Center"], [553, "CN Tower", "la CN Tower"],
+  [634, "Tokyo Skytree", "el Tokyo Skytree"], [828, "Burj Khalifa", "el Burj Khalifa"], [979, "Salto Ángel", "el Salto Ángel"],
+  [1345, "Ben Nevis", "el Ben Nevis"], [1979, "Cerro Uritorco", "el Cerro Uritorco"], [2388, "Cerro Catedral", "el Cerro Catedral"],
+  [2962, "Zugspitze", "el Zugspitze"], [3776, "Monte Fuji", "el Monte Fuji"], [4478, "Cervino", "el Cervino"], [4810, "Mont Blanc", "el Mont Blanc"],
+  [5895, "Kilimanjaro", "el Kilimanjaro"], [6961, "Aconcagua", "el Aconcagua"], [8849, "Everest", "el Everest"],
+  [11000, "Altura de un avión", "la altura de un avión"], [38969, "Salto de Baumgartner", "el salto de Baumgartner"],
+  [100000, "El espacio", "el espacio"], [408000, "Estación Espacial", "la Estación Espacial"]];
 const aL = t => t.startsWith("el ") ? "al " + t.slice(3) : "a " + t, deL = t => t.startsWith("el ") ? "del " + t.slice(3) : "de " + t;
+const hashOf = x => { let h = 7; for (const c of String(x)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; };
 function heightInfo(m) {
   let i = -1;
   while (i + 1 < HEIGHTS.length && HEIGHTS[i + 1][0] <= m) i++;
   const at = i >= 0 ? HEIGHTS[i] : null, next = HEIGHTS[i + 1] || null, from = at ? at[0] : 0;
   return { i, at, next, pct: next ? (m - from) / (next[0] - from) : 1, left: next ? next[0] - m : 0 };
 }
-// Frase corta para una caminata: "Casi el Obelisco" / "Más que la Torre Eiffel" / "2,3 Obeliscos"
-function climbLine(m) {
-  const h = heightInfo(m);
-  if (m >= 135 && m < 330) return `${dec1(m / 67.5)} Obeliscos`;
-  if (h.at && (!h.next || h.pct < 0.8)) return `Más que ${h.at[2]}`;
-  return `${int(m / h.next[0] * 100)} % ${deL(h.next[2])}`;
+// Comparación corta que va cambiando (fija por semilla para que no salte en cada render):
+// "Más que la Torre de Pisa" / "85 % del Big Ben" / "3,2 veces el Cristo Redentor" / "45 pisos de escalera"
+function climbLine(m, seed = Math.round(m)) {
+  const h = heightInfo(m), opts = [];
+  if (h.at && m / h.at[0] < 1.6) opts.push(`Más que ${h.at[2]}`);
+  if (h.next && m / h.next[0] >= 0.7) opts.push(`${int(m / h.next[0] * 100)} % ${deL(h.next[2])}`);
+  HEIGHTS.forEach(x => { const r = m / x[0]; if (r >= 1.5 && r <= 12) opts.push(`${dec1(r).replace(/,0$/, "")} veces ${x[2]}`); });
+  if (m >= 6 && m < 3000) opts.push(`${int(m / 3)} pisos de escalera`);
+  if (!opts.length) return h.next ? `${int(Math.max(1, h.left))} m para llegar ${aL(h.next[2])}` : `Más que ${h.at[2]}`;
+  return opts[hashOf(seed) % opts.length];
 }
 function climbRow(label, m) {
   const h = heightInfo(m);
   return `<div class="trip-r">
     <div class="trip-h"><span>${label}</span></div>
-    <div class="trip-d"><b class="num">${int(m)} m</b><span class="o">${h.at ? `· pasaste ${h.at[2]}` : ""}</span></div>
+    <div class="trip-d"><b class="num">${int(m)} m</b><span class="o">· ${climbLine(m, label + C.dayKey(Date.now()))}</span></div>
     <div class="trip-bar climb"><i style="width:${Math.max(2, h.pct * 100)}%"></i></div>
     <div class="trip-f"><span>${h.at ? h.at[1] : "Piso"}</span><span>${h.next ? `${int(Math.max(1, h.left))} m ${aL(h.next[2])}` : "Ya estás en el espacio"}</span></div>
   </div>`;
@@ -1120,7 +1132,7 @@ function openSession(s, fresh = false) {
         <span><b class="num">${incPct}%</b>inclinada</span>
         <span><b class="num">${int(climbOf(s))}<small>m</small></b>subidos</span>
       </div>
-      ${climbOf(s) >= 1 ? `<div class="sum-climb">${icon("climb", 15)}${climbLine(climbOf(s))}</div>` : ""}
+      ${climbOf(s) >= 1 ? `<div class="sum-climb">${icon("climb", 15)}${climbLine(climbOf(s), s.id || s.start)}</div>` : ""}
       ${samples.length > 3 || segs.length > 1 ? `<div class="sum-chart">
         <div class="sc-h"><span>${samples.length > 3 ? `Velocidad · máx ${dec1(maxS)}` : "Tramos"}</span>${segs.length > 1 ? `<button data-tramos>${segs.length} tramos${icon("chevR", 14)}</button>` : ""}</div>
         ${samples.length > 3 ? `<div class="spd-chart sm">${UI.area(samples, { min: 0, max: Math.max(maxS * 1.15, 1), h: 70 })}</div>` : ""}
@@ -2049,7 +2061,7 @@ document.addEventListener("click", e => {
 });
 
 // ================= versión =================
-const VERSION = "1.14.4";
+const VERSION = "1.14.5";
 (() => {
   const prev = store.get("version", null);
   store.set("version", VERSION);
